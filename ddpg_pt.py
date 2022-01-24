@@ -8,6 +8,14 @@ import copy
 from collections import deque
 from typing import NamedTuple
 
+"""
+implementations for help:
+https://github.com/sfujim/TD3/blob/master/TD3.py
+https://colab.research.google.com/drive/19-z6Go3RydP9_uhICh0iHFgOXyKXgX7f#scrollTo=zuw702kdRr4E
+"""
+
+
+
 class Memory:
     def __init__(self, max_size):
         self.max_size = max_size
