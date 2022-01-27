@@ -6,7 +6,7 @@ import gym
 import copy
 from gym.wrappers import RecordEpisodeStatistics
 
-from utils.models import Actor, Critic
+from utils.models import Actor, td3_Critic
 #from utils.memory import Memory
 
 """
@@ -29,9 +29,9 @@ def noisy_action(a_t, env):
     noise = (torch.randn_like(a_t) * 0.2).clamp(-0.5, 0.5)
     return (a_t + noise).clamp(env.action_space.low[0],env.action_space.high[0])
 
-def update(batch):
+def update(batch, i):
     s = torch.from_numpy(np.array(batch.s))
-    a = torch.FloatTensor(batch.a)#.unsqueeze(1)    #remove for LunarLanderContinuous-v2
+    a = torch.from_numpy(np.array(batch.a))#.unsqueeze(1)    #remove for LunarLanderContinuous-v2
     r = torch.FloatTensor(batch.r).unsqueeze(1)
     s_p = torch.from_numpy(np.array(batch.s_p))
     d = torch.IntTensor(batch.d).unsqueeze(1)
@@ -39,26 +39,32 @@ def update(batch):
     #print(f"s dims: {s.size()}, a dims: {a.size()}")
 
     #Critic
-    q = critic(s, a)
-    a_p = actor(s_p)
-    target_q = critic_target(s_p, a_p).detach()
-    y = r + 0.99 * target_q * (1 - d)
+    with torch.no_grad():
+        a_p = actor(s_p)
+        target_q1, target_q2 = critic_target(s_p, a_p)
+        target_q = torch.min(target_q1, target_q2)
+        y = r + 0.99 * target_q * (1 - d)
 
-    critic_loss = F.mse_loss(q, y)
+    q1, q2 = critic(s, a)
+
+    critic_loss = F.mse_loss(q1, y) + F.mse_loss(q2, y)
 
     critic_optimizer.zero_grad()
     critic_loss.backward()
     critic_optimizer.step()
 
     #Actor
-    policy_loss = -critic(s, actor(s)).mean()
-    actor_optimizer.zero_grad()
-    policy_loss.backward()
-    actor_optimizer.step()
-    return [critic_loss, policy_loss]
+    if i % 2 == 0:
+        policy_loss = -critic.q1_forward(s, actor(s)).mean()
+        actor_optimizer.zero_grad()
+        policy_loss.backward()
+        actor_optimizer.step()
 
-#env_name = 'MountainCarContinuous-v0'
-env_name = 'LunarLanderContinuous-v2'
+    return critic_loss
+
+env_name = 'MountainCarContinuous-v0'
+#env_name = 'LunarLanderContinuous-v2'
+#env_name = 'Pendulum-v1'
 env = gym.make(env_name)
 env = RecordEpisodeStatistics(env)
 
@@ -71,12 +77,12 @@ actor = Actor(obs_dim, act_dim, env.action_space.high[0])
 actor_target = copy.deepcopy(actor)
 actor_optimizer = torch.optim.Adam(actor.parameters(), lr=1e-4)
 
-critic = Critic(obs_dim, act_dim)
+critic = td3_Critic(obs_dim, act_dim)
 critic_target = copy.deepcopy(critic)
 critic_optimizer = torch.optim.Adam(critic.parameters(), lr=1e-3)
 
 s_t = env.reset()
-tau = 1e-2  #from ivana's ddpg notebook
+tau = 0.005
 
 c_losses = []
 episodic_rewards = []
@@ -91,18 +97,19 @@ for i in range(300000):
 
     if len(replay_buffer) >= 128:
         batch = Transition(*zip(*random.sample(replay_buffer, k=128)))
-        loss = update(batch)
-        c_losses.append(loss[0])
+        loss = update(batch, i)
+        c_losses.append(loss)
         avg_c_losses = (sum(c_losses[-100:]))/100
         avg_r = (sum(episodic_rewards[-100:]))/100
 
         if i % 100 == 0: print(f"Timestep: {i} | Avg. Critic Loss: {avg_c_losses} | avg. Reward: {avg_r}")        
 
-        for target_param, param in zip(actor_target.parameters(), actor.parameters()):
-            target_param.data.copy_(param.data * tau + target_param.data * (1.0 - tau))
-
-        for target_param, param in zip(critic_target.parameters(), critic.parameters()):
-            target_param.data.copy_(param.data * tau + target_param.data * (1.0 - tau))
+        if i % 2 == 0:
+            for target_param, param in zip(critic_target.parameters(), critic.parameters()):
+                target_param.data.copy_(param.data * tau + target_param.data * (1.0 - tau))
+            
+            for target_param, param in zip(actor_target.parameters(), actor.parameters()):
+                target_param.data.copy_(param.data * tau + target_param.data * (1.0 - tau))
 
     if done:
         episodic_rewards.append(int(info['episode']['r']))
