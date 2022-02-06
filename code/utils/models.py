@@ -78,15 +78,17 @@ class Q_val(nn.Module):
 
 class Q_duelling(nn.Module):
 	def __init__(self, state_dim, action_dim):
-		super(Q_val, self).__init__()
+		super(Q_duelling, self).__init__()
 		self.l1 = nn.Linear(state_dim, 64)
-		self.l2 = nn.Linear(64, 64)
-		self.l3 = nn.Linear(64, 64)
-		self.l4 = nn.Linear(64, action_dim)
+		self.l21 = nn.Linear(64, 64)
+		self.l22 = nn.Linear(64, action_dim)
+		self.l31 = nn.Linear(64, 64)
+		self.l32 = nn.Linear(64, 1)
 
 	def forward(self, state):
 		q = F.relu(self.l1(state))
-		adv = F.relu(self.l2(q))
-		val = F.relu(self.l3(q))
-		q = self.l4(val + adv)
-		return q
+		adv = F.relu(self.l21(q))
+		adv = F.relu(self.l22(adv))
+		val = F.relu(self.l31(q))
+		val = F.relu(self.l32(val))
+		return val + adv

@@ -62,9 +62,9 @@ def update(batch, i):
 
     return critic_loss
 
-env_name = 'MountainCarContinuous-v0'
+#env_name = 'MountainCarContinuous-v0'
 #env_name = 'LunarLanderContinuous-v2'
-#env_name = 'Pendulum-v1'
+env_name = 'Pendulum-v1'
 env = gym.make(env_name)
 env = RecordEpisodeStatistics(env)
 
