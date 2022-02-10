@@ -3,8 +3,9 @@ import numpy as np
 
 from stable_baselines3 import TD3
 
+env_name = "Pendulum-v1"
 #env_name = "BipedalWalker-v3"
-env_name = "LunarLanderContinuous-v2"
+#env_name = "LunarLanderContinuous-v2"
 env = gym.make(env_name)
 
 model = TD3("MlpPolicy", env, verbose=1)

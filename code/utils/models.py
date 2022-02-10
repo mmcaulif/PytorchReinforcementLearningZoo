@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class Actor(nn.Module):
+class td3_Actor(nn.Module):
 	def __init__(self, state_dim, action_dim, max_action):
-		super(Actor, self).__init__()
+		super(td3_Actor, self).__init__()
 		self.l1 = nn.Linear(state_dim, 256)
 		self.l2 = nn.Linear(256, 256)
 		self.l3 = nn.Linear(256, action_dim)
@@ -13,7 +13,8 @@ class Actor(nn.Module):
 	def forward(self, state):
 		a = F.relu(self.l1(state))
 		a = F.relu(self.l2(a))
-		return torch.tanh(self.l3(a)) * self.max_action
+		a = torch.tanh(self.l3(a))
+		return torch.mul(a, self.max_action)
 
 class Critic(nn.Module):
 	def __init__(self, state_dim, action_dim):
@@ -43,7 +44,10 @@ class td3_Critic(nn.Module):
 
 
 	def forward(self, state, action):
-		sa = torch.cat([state, action], 1)
+		try:
+			sa = torch.cat([state, action], 1)
+		except:	
+			sa = torch.cat([state, action], -1)
 
 		q1 = F.relu(self.l1(sa))
 		q1 = F.relu(self.l2(q1))
@@ -56,7 +60,10 @@ class td3_Critic(nn.Module):
 
 
 	def q1_forward(self, state, action):
-		sa = torch.cat([state, action], 1)
+		try:
+			sa = torch.cat([state, action], 1)
+		except:	
+			sa = torch.cat([state, action], -1)
 
 		q1 = F.relu(self.l1(sa))
 		q1 = F.relu(self.l2(q1))
