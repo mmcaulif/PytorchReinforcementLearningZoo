@@ -164,7 +164,7 @@ def main():
     s_t = env.reset()
     while True:
         env.render()
-        a_t = td3_agent.actor(torch.from_numpy(s_t)).detach()
+        a_t = np.array(td3_agent.actor(torch.from_numpy(s_t)).detach())
         s_tp1, r_t, done, _ = env.step(a_t)
         if done:
             s_tp1 = env.reset()
