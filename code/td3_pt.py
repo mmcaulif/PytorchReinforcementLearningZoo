@@ -149,9 +149,9 @@ def main():
 
             if i % 100 == 0: 
                 c_losses.append(loss)
-                avg_c_losses = sum(c_losses)/100
+                avg_c_losses = sum(c_losses)/100    #for formatting, I want to round it better than just making it an int!
                 avg_r = sum(episodic_rewards)/10
-                print(f"Episodes: {episodes} | Timestep: {i} | Avg. Critic Loss: {avg_c_losses} | Avg. Reward: {avg_r}, [{len(episodic_rewards)}]")
+                print(f"Episodes: {episodes} | Timestep: {i} | Avg. Critic Loss: {int(avg_c_losses)} | Avg. Reward: {avg_r}, [{len(episodic_rewards)}]")
 
         if done:
             episodes += 1
