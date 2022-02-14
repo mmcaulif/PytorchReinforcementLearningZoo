@@ -11,7 +11,7 @@ from collections import deque
 from gym.wrappers import RecordEpisodeStatistics
 from typing import NamedTuple
 
-from utils.models import Q_val
+from utils.models import Q_val, Q_duelling
 
 class Transition(NamedTuple):
     s: list
@@ -77,7 +77,9 @@ act_dim = env.action_space.n
 
 replay_buffer = deque(maxlen=100000)
 
-dqn_agent = DQN(0.99, 5000, 1000, Q_val(obs_dim, act_dim))
+model = Q_val(obs_dim, act_dim)
+#model = Q_duelling(obs_dim, act_dim)
+dqn_agent = DQN(0.99, 50000, 1000, model)
 
 #optimizer = torch.optim.Adam(q_func.parameters(), lr=1e-3)
 

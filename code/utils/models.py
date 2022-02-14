@@ -78,7 +78,7 @@ class Q_val(nn.Module):
 
 class Q_duelling(nn.Module):
 	def __init__(self, state_dim, action_dim):
-		super(Q_val, self).__init__()
+		super(Q_duelling, self).__init__()
 		self.l1 = nn.Linear(state_dim, 64)
 		self.l2 = nn.Linear(64, 64)
 		self.l3 = nn.Linear(64, 64)
