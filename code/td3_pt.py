@@ -136,7 +136,7 @@ def main():
 
     s_t = env.reset()
 
-    for i in range(100000):
+    for i in range(200000):
         a_t = td3_agent.actor(torch.from_numpy(s_t)).detach()
         a_t = td3_agent.noisy_action(a_t)
         
@@ -148,7 +148,7 @@ def main():
             batch = Transition(*zip(*random.sample(replay_buffer, k=100)))
             loss = td3_agent.update(batch, i)
 
-            if i % 100 == 0: 
+            if i % 500 == 0: 
                 c_losses.append(loss)
                 avg_c_losses = sum(c_losses)/100    #for formatting, I want to round it better than just making it an int!
                 avg_r = sum(episodic_rewards)/10

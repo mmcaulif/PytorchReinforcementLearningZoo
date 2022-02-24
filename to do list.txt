@@ -1,4 +1,4 @@
--Compare and contrast 2 causaul inference augmentations
+-Compare and contrast 2 causal inference augmentations
 -Maybe try implement them in new types of environments or in different action spaces
 -Also try combine them
 -Start on report and include references!
