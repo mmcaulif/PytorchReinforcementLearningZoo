@@ -91,6 +91,7 @@ class TD3():
         #Critic update
         with torch.no_grad():
             a_p = self.actor(s_p)
+            a_p = self.noisy_action(a_p)
             target_q1, target_q2 = self.critic_target(s_p, a_p)
             target_q = torch.min(target_q1, target_q2)
             y = r + self.gamma * target_q * (1 - d)
