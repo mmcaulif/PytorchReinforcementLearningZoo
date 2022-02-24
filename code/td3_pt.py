@@ -79,7 +79,7 @@ class TD3():
 
     def noisy_action(self, a_t):
         noise = (torch.randn_like(a_t) * self.target_noise_clip).clamp(-self.target_policy_noise, self.target_policy_noise)
-        return (a_t + noise).clamp(self.act_low,self.act_high)
+        return (a_t + noise).clamp(self.act_low,self.act_high).numpy()
 
     def update(self, batch, i):
         s = torch.from_numpy(np.array(batch.s))
@@ -138,7 +138,7 @@ def main():
 
     for i in range(100000):
         a_t = td3_agent.actor(torch.from_numpy(s_t)).detach()
-        a_t = np.array(td3_agent.noisy_action(a_t))
+        a_t = td3_agent.noisy_action(a_t)
         
         s_tp1, r_t, done, info = env.step(a_t)
         
