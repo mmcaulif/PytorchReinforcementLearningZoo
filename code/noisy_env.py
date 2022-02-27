@@ -1,5 +1,4 @@
 from collections import deque
-from distutils.log import info
 import random
 from typing import NamedTuple
 import gym
@@ -8,8 +7,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from gym import Wrapper
-from dqn_pt import DQN
-from utils.models import Q_val
+#from dqn_pt import DQN
+#from utils.models import Q_val
 
 class Transition(NamedTuple):
     s: list
@@ -20,47 +19,6 @@ class Transition(NamedTuple):
     t: int
 
 replay_buffer = deque(maxlen=100000)
-
-#network
-class CIQ_Net(nn.Module):
-	def __init__(self, state_dim):
-		super(CIQ_Net, self).__init__()
-		self.encoder = nn.Sequential(nn.Linear(state_dim, 32),
-                                     nn.ReLU(),
-                                     nn.Linear(32, 32),
-                                     nn.ReLU())
-
-	def ciq_forward(self, state):
-		Z = self.encoder(state)
-
-		return Z
-
-#agent, subclass of DQN
-class CIQ(DQN):    #test that this functions correctly as a vanilla dqn
-    def __init__(self, tau=1e-3, step=4, num_treatment=2):
-        self.tau = tau
-
-        self.logits_t = nn.Sequential(nn.Linear(32, 32 // 2),
-                                      nn.ReLU(),
-                                      nn.Linear(32 // 2, num_treatment))
-        
-        self.fc = nn.Sequential(nn.Linear((32 + num_treatment) * step , (32 + num_treatment) * step // 2),
-                                nn.ReLU(),
-                                nn.Linear((32 + num_treatment) * step // 2, 2))
-
-    def soft_update_target(self):
-        for self.q_target, self.q_func in zip(self.q_target.parameters(), self.q_func.parameters()):
-            self.q_target.data.copy_(self.tau*self.q_func.data + (1.0-self.tau)*self.q_target.data)
-
-    """def ciq_update(self, batch):
-        s = torch.from_numpy(np.array(batch.s))
-        a = torch.IntTensor(batch.a).unsqueeze(1)
-        r = torch.FloatTensor(batch.r).unsqueeze(1)
-        s_p = torch.from_numpy(np.array(batch.s_p))
-        d = torch.IntTensor(batch.d).unsqueeze(1)
-        i_training = torch.IntTensor(batch.t)
-        loss = 0
-        print(i_training)"""
 
 class CIQ(nn.Module):
     def __init__(self, step=4, num_treatment=2):
@@ -81,24 +39,26 @@ class CIQ(nn.Module):
                                 nn.ReLU(),
                                 nn.Linear((32 + num_treatment) * step // 2, 2))
 
-    def forward(self, data):
-        out = {}
-        #print(data)
-        data = [torch.from_numpy(d) for d in data]
+    def forward(self, data, t_labels):
+        #Data comes in a list of length 'step' which is stacked observations
+        #print(f"Data: {data}")
+        #data = [torch.from_numpy(d) for d in data]
+        data = torch.as_tensor(data)    #imo looks better but is slow as data is a deque of np arrays
 
-        data = [self.encoder(s) for s in data]
-
+        data = self.encoder(data).flatten()
+        #comes out as a flattend tensor of length 128 (step * 32)
+        
         z = data
-        t = [self.logits_t(_z) for _z in z]
-
-        z = torch.cat(z, dim=-1)
-        print(z)
+        t = z.view(self.step[0], 32)
+        t = self.logits_t(t)    #outputs as a step * num treatments tensor
+        
+        print(len(z), z.size(), z)
         z = F.pad(z, pad=(32 * self.step - z.shape[-1], 0)) # pad zeros to the left to fit in fc layer
-        print(z)
+        
         t_stack = torch.stack(t, dim=1)
 
-        if self.training:
-            _t = torch.stack(data['t'][-self.step:], dim=1)
+        if self.training:   #create one hot vectors denoting the treatment labels
+            _t = torch.stack(t_labels[-self.step:], dim=1)
             onehot_t = torch.zeros(t_stack.shape).type(t_stack.type())
             onehot_t = onehot_t.scatter(2, _t.long(), 1)
             onehot_t = onehot_t.view(onehot_t.shape[0], -1)
@@ -111,10 +71,7 @@ class CIQ(nn.Module):
         onehot_t = F.pad(onehot_t, pad=(self.num_treatment * self.step - onehot_t.shape[-1], 0))
         y = self.fc(torch.cat([z, onehot_t], dim=-1))
         
-        out['t'] = t[-1]
-        out['y'] = y
-        out['z'] = z
-        return out
+        return t[-1], y, z
 
 class GaussianNoise(Wrapper):
     def __init__(self, env, p=0.5, var=1):
@@ -137,6 +94,11 @@ class GaussianNoise(Wrapper):
         next_state = I * gaussian_state + (1 - I) * next_state
 
         return next_state, reward, done_bool, I
+
+def ciq_loss(q, y, i_p, i_t):
+    t_onehot = torch.zeros(i_p.shape).type(i_p.type())
+    t_onehot = t_onehot.scatter(1, i_t.long(), 1)
+    return F.mse_loss(q, y) + nn.BCEwithlogitsloss()(i_p, t_onehot)
 
 
 env = gym.make('CartPole-v1')
