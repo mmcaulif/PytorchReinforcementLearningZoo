@@ -5,6 +5,7 @@ import gym
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch.optim as optim
 import numpy as np
 from gym import Wrapper
 #from dqn_pt import DQN
@@ -16,7 +17,7 @@ class Transition(NamedTuple):
     r: float
     s_p: list
     d: int
-    t: int
+    i: int
 
 replay_buffer = deque(maxlen=100000)
 
@@ -52,8 +53,9 @@ class CIQ(nn.Module):
         t = z.view(self.step[0], 32)
         t = self.logits_t(t)    #outputs as a step * num treatments tensor
         
-        print(len(z), z.size(), z)
+        print(len(z), z.size())
         z = F.pad(z, pad=(32 * self.step - z.shape[-1], 0)) # pad zeros to the left to fit in fc layer
+        #   ^ to be fixed, https://pytorch.org/docs/stable/generated/torch.nn.functional.pad.html
         
         t_stack = torch.stack(t, dim=1)
 
@@ -98,44 +100,60 @@ class GaussianNoise(Wrapper):
 def ciq_loss(q, y, i_p, i_t):
     t_onehot = torch.zeros(i_p.shape).type(i_p.type())
     t_onehot = t_onehot.scatter(1, i_t.long(), 1)
-    return F.mse_loss(q, y) + nn.BCEwithlogitsloss()(i_p, t_onehot)
+    return F.mse_loss(q, y) + nn.BCEWithLogitsLoss()(i_p, t_onehot)
 
+def ciq_update(batch, network, optimizer):
+    s = torch.from_numpy(np.array(batch.s)).type(torch.float32)
+    a = torch.from_numpy(np.array(batch.a)).unsqueeze(1)
+    r = torch.FloatTensor(batch.r).unsqueeze(1)
+    s_p = torch.from_numpy(np.array(batch.s_p)).type(torch.float32)
+    d = torch.IntTensor(batch.d).unsqueeze(1)
+    i = torch.Tensor(batch.i)
+
+    i_model, q, _ = network(s, i)
+    q = torch.gather(q, 1, a.long())
+
+    i_p = torch.zeros_like(i)
+    _, q_p, _ = network(s_p, i_p)
+    y = r + 0.99 * q_p.max(1)[0].view(4, 1) * (1 - d)
+
+    loss = ciq_loss(q, y, i_model, i)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+    return loss
 
 env = gym.make('CartPole-v1')
 env = GaussianNoise(env)
 obs_dim = env.observation_space.shape[0]
 act_dim = env.action_space.n
-#ciq_agent = CIQ(env, 0.99, 50000, 1000, 64, Q_val(obs_dim, act_dim), 500)
 
 
-"""for i in range(20):
-    a_t = ciq_agent.select_action(s_t)
-    
-    s_tp1, r_t, d, i_t = env.step(a_t)
-
-    #print(s_tp1, i_t)
-
-    replay_buffer.append([s_t, a_t, r_t, s_tp1, d, i_t])
-    
-    s_t = s_tp1
-
-    if d:
-        s_t = env.reset()"""
 
 def main():
-    obs = deque(maxlen=4)
-    ciq_agent = CIQ()
+    #obs = deque(maxlen=4)
+    ciq_net = CIQ(step=1)
+    criterion = optim.Adam(ciq_net.parameters(), lr=1e-3)
     s_t = env.reset()
 
-    for i in range(4):
-        obs.append(s_t)
+    for t in range(4):
+        #obs.append(s_t)
         a_t = env.action_space.sample()
-        s_tp1, r_t, d, _ = env.step(a_t)
+        s_tp1, r_t, d, i_t = env.step(a_t)
+        replay_buffer.append([s_t, a_t, r_t, s_tp1, d, i_t])
 
-        if len(obs) >= 4:
-            print("out")
-            with torch.no_grad():
-                out = ciq_agent(obs)
+
+        ciq_net(torch.from_numpy(s_t).type(torch.float32), torch.Tensor(i_t))
+
+        """if len(replay_buffer) >= 4:
+            batch = Transition(*zip(*random.sample(replay_buffer, k=4)))
+            ciq_update(batch, ciq_net, criterion)"""
+
+        if d:
+            s_tp1 = env.reset()
+
+        s_t = s_tp1
 
 if __name__ == "__main__":
    # stuff only to run when not called via 'import' here
