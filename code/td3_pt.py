@@ -82,16 +82,16 @@ class TD3():
         return (a_t + noise).clamp(self.act_low,self.act_high).numpy()
 
     def update(self, batch, i):
-        s = torch.from_numpy(np.array(batch.s))
+        s = torch.from_numpy(np.array(batch.s)).type(torch.float32)
         a = torch.from_numpy(np.array(batch.a))
         r = torch.FloatTensor(batch.r).unsqueeze(1)
-        s_p = torch.from_numpy(np.array(batch.s_p))
+        s_p = torch.from_numpy(np.array(batch.s_p)).type(torch.float32)
         d = torch.IntTensor(batch.d).unsqueeze(1)
 
         #Critic update
         with torch.no_grad():
             a_p = self.actor(s_p)
-            a_p = self.noisy_action(a_p)
+            a_p = torch.from_numpy(self.noisy_action(a_p))
             target_q1, target_q2 = self.critic_target(s_p, a_p)
             target_q = torch.min(target_q1, target_q2)
             y = r + self.gamma * target_q * (1 - d)
