@@ -1,28 +1,41 @@
 from collections import deque
+import copy
 import random
+from turtle import done
 from typing import NamedTuple
 import gym
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils import clip_grad_norm_
 import numpy as np
 from gym import Wrapper
-#from dqn_pt import DQN
-#from utils.models import Q_val
 
-class Transition(NamedTuple):
-    s: list
-    a: float
-    r: float
-    s_p: list
-    d: int
-    t: int
+class GaussianNoise(Wrapper):
+    def __init__(self, env, p=0.1, var=0.5):
+        super().__init__(env)
+        self.env = env
+        self.p = p
+        self.var = var
+        self.obs_low = env.observation_space.low[0]
+        self.obs_high = env.observation_space.high[0]
 
-replay_buffer = deque(maxlen=100000)
+    def step(self, action):  
+        next_state, reward, done_bool, _ = super().step(action)
+        t_labels = np.zeros(2)
+        noise = torch.normal(mean=torch.zeros_like(torch.from_numpy(next_state)), std=self.var).numpy()
+        
+        I = 0
+        if torch.rand(1) < self.p: I = 1
+        t_labels[I] = 1
+        gaussian_state = np.clip((next_state + noise), self.obs_low, self.obs_high)
+        next_state = I * gaussian_state + (1 - I) * next_state
 
-class CIQ(nn.Module):
-    def __init__(self, step=4, num_treatment=2):
-        super(CIQ, self).__init__()
+        return next_state, reward, done_bool, t_labels
+
+class Q_ciq(nn.Module):
+    def __init__(self, step=4, num_treatment=2, act_dims=2, obs_dims=4):
+        super(Q_ciq, self).__init__()
         self.step = step, 
         self.num_treatment = num_treatment,
         
@@ -37,105 +50,144 @@ class CIQ(nn.Module):
         
         self.fc = nn.Sequential(nn.Linear((32 + num_treatment) * step , (32 + num_treatment) * step // 2),
                                 nn.ReLU(),
-                                nn.Linear((32 + num_treatment) * step // 2, 2))
+                                nn.Linear((32 + num_treatment) * step // 2, act_dims))
 
     def forward(self, data, t_labels):
         #Data comes in a list of length 'step' which is stacked observations
-        #print(f"Data: {data}")
-        #data = [torch.from_numpy(d) for d in data]
-        data = torch.as_tensor(data)    #imo looks better but is slow as data is a deque of np arrays
+        z = self.encoder(data)  #comes out as a flattened tensor of length 128 (step * 32)
+        t_p = self.logits_t(z)  #outputs as a step * num treatments tensor
+        
+        #onehot_t = F.pad(onehot_t, pad=(self.num_treatment * self.step - onehot_t.shape[-1], 0))
+        #t_labels = torch.from_numpy(t_labels).type(torch.float32)
+        q = self.fc(torch.cat([z, t_labels], dim=-1))
+        
+        return q, t_p
 
-        data = self.encoder(data).flatten()
-        #comes out as a flattend tensor of length 128 (step * 32)
-        
-        z = data
-        t = z.view(self.step[0], 32)
-        t = self.logits_t(t)    #outputs as a step * num treatments tensor
-        
-        print(len(z), z.size(), z)
-        z = F.pad(z, pad=(32 * self.step - z.shape[-1], 0)) # pad zeros to the left to fit in fc layer
-        
-        t_stack = torch.stack(t, dim=1)
+class CIQ():
+    def __init__(
+        self,
+        environment,
+        network,
+        gamma=0.99,
+        train_after=50000,
+        train_freq=4,
+        target_update=1000,
+        batch_size=64,
+        verbose=500,
+        learning_rate=1e-4,
+        max_grad_norm=10,
+        tau=5e-3
+    ):
+        self.environment = environment
+        self.q_func = network
+        self.q_target = copy.deepcopy(self.q_func)
+        self.gamma = gamma
+        self.train_after = train_after
+        self.train_freq = train_freq
+        self.target_update = target_update
+        self.batch_size = batch_size
+        self.optimizer = torch.optim.Adam(self.q_func.parameters(), lr=learning_rate)
+        self.max_grad_norm = max_grad_norm
+        self.tau = tau
 
-        if self.training:   #create one hot vectors denoting the treatment labels
-            _t = torch.stack(t_labels[-self.step:], dim=1)
-            onehot_t = torch.zeros(t_stack.shape).type(t_stack.type())
-            onehot_t = onehot_t.scatter(2, _t.long(), 1)
-            onehot_t = onehot_t.view(onehot_t.shape[0], -1)
-        
+        self.EPS_END = 0.05
+        self.EPS = 0.9
+        self.EPS_DECAY = 0.999
+
+        self.verbose = verbose
+        pass
+
+    def update(self, batch):
+        s = torch.from_numpy(np.array(batch.s))
+        a = torch.from_numpy(np.array(batch.a)).unsqueeze(1)
+        r = torch.FloatTensor(batch.r).unsqueeze(1)
+        s_p = torch.from_numpy(np.array(batch.s_p))
+        d = torch.IntTensor(batch.d).unsqueeze(1)
+        i_t = torch.from_numpy(np.array(batch.t)).type(torch.float32)
+
+        q, i_p = self.q_func(s, i_t)
+        q = q.gather(1, a.long())
+
+        with torch.no_grad():
+            i_ghost = torch.zeros(i_t.size())
+            a_p = torch.argmax(self.q_func(s_p, i_ghost)[0], 1).unsqueeze(1)
+            q_p = self.q_target(s_p, i_ghost)[0].gather(1, a_p)
+            y = r + self.gamma * q_p.max(1)[0].view(self.batch_size, 1) * (1 - d)
+
+        loss = F.mse_loss(q, y)# +  F.binary_cross_entropy_with_logits(i_p, i_t)        
+
+        self.optimizer.zero_grad()
+        loss.backward()
+        clip_grad_norm_(self.q_func.parameters(), self.max_grad_norm)
+        self.optimizer.step()
+
+        return loss
+
+    def update_target(self):
+        self.q_target = copy.deepcopy(self.q_func)
+
+    def soft_update(self):
+        for target_param, param in zip(self.q_target.parameters(), self.q_func.parameters()):
+                target_param.data.copy_(param.data * self.tau + target_param.data * (1.0 - self.tau))
+
+    def select_action(self, s):
+        self.EPS = max(self.EPS_END, self.EPS * self.EPS_DECAY)
+        if torch.rand(1) > self.EPS:
+            q, _ = self.q_func(torch.from_numpy(s)).detach()
+            a = torch.argmax(q).numpy()
         else:
-            """
-            bit when not training removed for readability
-            """
+            a = self.environment.action_space.sample()
 
-        onehot_t = F.pad(onehot_t, pad=(self.num_treatment * self.step - onehot_t.shape[-1], 0))
-        y = self.fc(torch.cat([z, onehot_t], dim=-1))
-        
-        return t[-1], y, z
+        return a
 
-class GaussianNoise(Wrapper):
-    def __init__(self, env, p=0.5, var=1):
-        super().__init__(env)
-        self.env = env
-        self.p = p
-        self.var = var
-        self.obs_low = env.observation_space.low[0]
-        self.obs_high = env.observation_space.high[0]
-
-    def step(self, action):  
-        next_state, reward, done_bool, _ = super().step(action)
-
-        noise = torch.normal(mean=torch.zeros_like(torch.from_numpy(next_state)), std=self.var).numpy()
-        
-        I = 0
-        if torch.rand(1) < self.p: I = 1
-        
-        gaussian_state = np.clip((next_state + noise), self.obs_low, self.obs_high)
-        next_state = I * gaussian_state + (1 - I) * next_state
-
-        return next_state, reward, done_bool, I
-
-def ciq_loss(q, y, i_p, i_t):
-    t_onehot = torch.zeros(i_p.shape).type(i_p.type())
-    t_onehot = t_onehot.scatter(1, i_t.long(), 1)
-    return F.mse_loss(q, y) + nn.BCEwithlogitsloss()(i_p, t_onehot)
-
-
-env = gym.make('CartPole-v1')
-env = GaussianNoise(env)
-obs_dim = env.observation_space.shape[0]
-act_dim = env.action_space.n
-#ciq_agent = CIQ(env, 0.99, 50000, 1000, 64, Q_val(obs_dim, act_dim), 500)
-
-
-"""for i in range(20):
-    a_t = ciq_agent.select_action(s_t)
-    
-    s_tp1, r_t, d, i_t = env.step(a_t)
-
-    #print(s_tp1, i_t)
-
-    replay_buffer.append([s_t, a_t, r_t, s_tp1, d, i_t])
-    
-    s_t = s_tp1
-
-    if d:
-        s_t = env.reset()"""
+class Transition(NamedTuple):
+    s: list
+    a: float
+    r: float
+    s_p: list
+    d: int
+    t: int
 
 def main():
-    obs = deque(maxlen=4)
-    ciq_agent = CIQ()
+    env_name = 'CartPole-v0'
+    env = gym.make(env_name)
+    env = GaussianNoise(env, p=0)
+    
+    ciq_agent = CIQ(env, Q_ciq(step=1), learning_rate=5e-4) #hyperparameters taken from ciq paper
+    replay_buffer = deque(maxlen=1000000)
+
+    episodic_rewards = deque(maxlen=10)
+    r_sum = 0
+    episodes = 0
     s_t = env.reset()
 
-    for i in range(4):
-        obs.append(s_t)
+    for i in range(300000):
         a_t = env.action_space.sample()
-        s_tp1, r_t, d, _ = env.step(a_t)
+        s_tp1, r_t, done, i_t = env.step(a_t)
+        print(i_t)
+        r_sum += r_t
+        replay_buffer.append([s_t, a_t, r_t, s_tp1, done, i_t])
 
-        if len(obs) >= 4:
-            print("out")
-            with torch.no_grad():
-                out = ciq_agent(obs)
+        if len(replay_buffer) >= ciq_agent.batch_size and i >= ciq_agent.train_after:
+            
+            if i % ciq_agent.train_freq == 0:
+                batch = Transition(*zip(*random.sample(replay_buffer, k=ciq_agent.batch_size)))
+                ciq_agent.update(batch)
+                
+            if i % ciq_agent.target_update == 0:
+                ciq_agent.update_target()
+                
+            if i % ciq_agent.verbose == 0 and i > 0:
+                avg_r = sum(episodic_rewards) / 10
+                print(f"Episodes: {episodes} | Timestep: {i} | Avg. Reward: {avg_r}, [{len(episodic_rewards)}]")            
+
+        if done:
+            episodes += 1
+            episodic_rewards.append(r_sum)
+            r_sum = 0
+            s_tp1 = env.reset()
+
+        s_t = s_tp1
 
 if __name__ == "__main__":
    # stuff only to run when not called via 'import' here

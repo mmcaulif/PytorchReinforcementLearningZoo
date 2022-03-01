@@ -1,14 +1,16 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils import clip_grad_norm_
 import numpy as np
 import gym
 import copy
 import random
-import math
 from collections import deque
 from gym.wrappers import RecordEpisodeStatistics
 from typing import NamedTuple
+
+from noisy_env import GaussianNoise
 
 from utils.models import Q_val, Q_duelling
 
@@ -20,26 +22,30 @@ class Transition(NamedTuple):
     s_p: list
     d: int
 
-class DQN:
+class DDQN:
     def __init__(
         self,
         environment,
         network,
         gamma=0.99,
         train_after=50000,
+        train_freq=4,
         target_update=1000,
         batch_size=64,
         verbose=500,
-        learning_rate=1e-4
+        learning_rate=1e-4,
+        max_grad_norm=10,
     ):
         self.environment = environment
-        self.gamma = gamma
-        self.train_after = train_after
-        self.target_update = target_update
-        self.batch_size = batch_size
         self.q_func = network
         self.q_target = copy.deepcopy(self.q_func)
+        self.gamma = gamma
+        self.train_after = train_after
+        self.train_freq = train_freq
+        self.target_update = target_update
+        self.batch_size = batch_size
         self.optimizer = torch.optim.Adam(self.q_func.parameters(), lr=learning_rate)
+        self.max_grad_norm = max_grad_norm
 
         self.EPS_END = 0.05
         self.EPS = 0.9
@@ -49,22 +55,23 @@ class DQN:
 
     def update(self, batch):
         s = torch.from_numpy(np.array(batch.s))
-        #a = torch.IntTensor(batch.a)#.unsqueeze(1)  # remove for LunarLander-v2
         a = torch.from_numpy(np.array(batch.a)).unsqueeze(1)
         r = torch.FloatTensor(batch.r).unsqueeze(1)
         s_p = torch.from_numpy(np.array(batch.s_p))
         d = torch.IntTensor(batch.d).unsqueeze(1)
 
-        q = torch.gather(self.q_func(s), 1, a.long())
+        q = self.q_func(s).gather(1, a.long())
 
-        q_p = self.q_target(s_p).detach()
-
-        y = r + 0.99 * q_p.max(1)[0].view(self.batch_size, 1) * (1 - d)
+        with torch.no_grad():
+            a_p = torch.argmax(self.q_func(s_p), dim = 1).unsqueeze(1)  #actions selected from local q
+            q_p = self.q_target(s_p).gather(1, a_p)    #actions evaluated from target q
+            y = r + self.gamma * q_p.max(1)[0].view(self.batch_size, 1) * (1 - d)
 
         loss = F.mse_loss(q, y)
 
         self.optimizer.zero_grad()
         loss.backward()
+        clip_grad_norm_(self.q_func.parameters(), self.max_grad_norm)
         self.optimizer.step()
 
         return loss
@@ -83,7 +90,6 @@ class DQN:
 
 def main():
     env_name = "CartPole-v0"
-    #env_name = 'LunarLander-v2'
     env = gym.make(env_name)
     env = RecordEpisodeStatistics(env)
 
@@ -92,36 +98,30 @@ def main():
 
     replay_buffer = deque(maxlen=1000000)
 
-    dqn_agent = DQN(env, Q_duelling(obs_dim, act_dim))  
-    #1e-3 for quicker but unstable learning for cartpole
+    dqn_agent = DDQN(env, Q_val(obs_dim, act_dim), train_after=50000)
 
     episodes = 0
     s_t = env.reset()
 
-    losses = deque(maxlen=dqn_agent.verbose)
     episodic_rewards = deque(maxlen=10)
 
-    for i in range(100000):
+    for i in range(300000):
         a_t = dqn_agent.select_action(s_t)
         s_tp1, r_t, done, info = env.step(a_t)
         replay_buffer.append([s_t, a_t, r_t, s_tp1, done])
 
-        # if i % 10 == 0: print(f"Epsilon value: {dqn_agent.EPS}")
-
         if len(replay_buffer) >= dqn_agent.batch_size and i >= dqn_agent.train_after:
-            batch = Transition(*zip(*random.sample(replay_buffer, k=dqn_agent.batch_size)))
             
-            if i % 4 == 0:
+            if i % dqn_agent.train_freq == 0:
+                batch = Transition(*zip(*random.sample(replay_buffer, k=dqn_agent.batch_size)))
                 loss = dqn_agent.update(batch)
-                losses.append(loss)
-            
-            if i % dqn_agent.verbose == 0:
-                avg_losses = sum(losses) / dqn_agent.verbose
-                avg_r = sum(episodic_rewards) / 10
-                print(f"Episodes: {episodes} | Timestep: {i} | Avg. Loss: {avg_losses} | Avg. Reward: {avg_r}, [{len(episodic_rewards)}]")
 
             if i % dqn_agent.target_update == 0:
                 dqn_agent.update_target()
+            
+            if i % dqn_agent.verbose == 0:
+                avg_r = sum(episodic_rewards) / 10
+                print(f"Episodes: {episodes} | Timestep: {i} | Avg. Reward: {avg_r}, [{len(episodic_rewards)}]")
 
         if done:
             episodes += 1

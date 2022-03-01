@@ -7,8 +7,8 @@ import gym
 import copy
 from gym.wrappers import RecordEpisodeStatistics
 
-#from utils.models import td3_Actor, td3_Critic
-from PytorchContinousRL.code.utils.models import td3_Actor, td3_Critic
+from utils.models import td3_Actor, td3_Critic
+#from PytorchContinousRL.code.utils.models import td3_Actor, td3_Critic
 
 #from utils.memory import Memory
 
@@ -90,7 +90,7 @@ class TD3():
 
         #Critic update
         with torch.no_grad():
-            a_p = self.actor(s_p)
+            a_p = self.actor_target(s_p)
             a_p = self.noisy_action(a_p)
             target_q1, target_q2 = self.critic_target(s_p, a_p)
             target_q = torch.min(target_q1, target_q2)
