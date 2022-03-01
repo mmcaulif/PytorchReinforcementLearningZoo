@@ -39,29 +39,29 @@ class Q_ciq(nn.Module):
         self.step = step, 
         self.num_treatment = num_treatment,
         
-        self.encoder = nn.Sequential(nn.Linear(4, 32),
+        self.encoder = nn.Sequential(nn.Linear(obs_dims, 64),
                                      nn.ReLU(),
-                                     nn.Linear(32, 32),
-                                     nn.ReLU())
+                                     nn.Linear(64, 64),
+                                     nn.ReLU(),
+                                     nn.Linear(64, 64)
+                                     )
 
-        self.logits_t = nn.Sequential(nn.Linear(32, 32 // 2),
+        self.logits_t = nn.Sequential(nn.Linear(64, 32),
                                       nn.ReLU(),
-                                      nn.Linear(32 // 2, num_treatment))
+                                      nn.Linear(32, num_treatment)
+                                      )
         
-        self.fc = nn.Sequential(nn.Linear((32 + num_treatment) * step , (32 + num_treatment) * step // 2),
+        self.fc = nn.Sequential(nn.Linear((64 + num_treatment) * step , (64 + num_treatment) * step),
                                 nn.ReLU(),
-                                nn.Linear((32 + num_treatment) * step // 2, act_dims))
+                                nn.Linear((64 + num_treatment) * step, act_dims)
+                                )
 
-    def forward(self, data, t_labels):
-        #Data comes in a list of length 'step' which is stacked observations
-        z = self.encoder(data)  #comes out as a flattened tensor of length 128 (step * 32)
+    def forward(self, s, t_labels):
+        z = self.encoder(s)  #comes out as a flattened tensor of length 128 (step * 32)
         t_p = self.logits_t(z)  #outputs as a step * num treatments tensor
-        
-        #onehot_t = F.pad(onehot_t, pad=(self.num_treatment * self.step - onehot_t.shape[-1], 0))
-        #t_labels = torch.from_numpy(t_labels).type(torch.float32)
         q = self.fc(torch.cat([z, t_labels], dim=-1))
-        
-        return q, t_p
+        #return q, t_p
+        return z, t_p
 
 class CIQ():
     def __init__(
@@ -133,7 +133,7 @@ class CIQ():
     def select_action(self, s):
         self.EPS = max(self.EPS_END, self.EPS * self.EPS_DECAY)
         if torch.rand(1) > self.EPS:
-            q, _ = self.q_func(torch.from_numpy(s)).detach()
+            q = self.q_func(torch.from_numpy(s)).detach()[0]
             a = torch.argmax(q).numpy()
         else:
             a = self.environment.action_space.sample()
@@ -164,7 +164,6 @@ def main():
     for i in range(300000):
         a_t = env.action_space.sample()
         s_tp1, r_t, done, i_t = env.step(a_t)
-        print(i_t)
         r_sum += r_t
         replay_buffer.append([s_t, a_t, r_t, s_tp1, done, i_t])
 
@@ -173,9 +172,10 @@ def main():
             if i % ciq_agent.train_freq == 0:
                 batch = Transition(*zip(*random.sample(replay_buffer, k=ciq_agent.batch_size)))
                 ciq_agent.update(batch)
+                ciq_agent.soft_update()
                 
-            if i % ciq_agent.target_update == 0:
-                ciq_agent.update_target()
+            #if i % ciq_agent.target_update == 0:
+            #    ciq_agent.update_target()
                 
             if i % ciq_agent.verbose == 0 and i > 0:
                 avg_r = sum(episodic_rewards) / 10

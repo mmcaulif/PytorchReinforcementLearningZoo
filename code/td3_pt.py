@@ -20,7 +20,6 @@ https://colab.research.google.com/drive/19-z6Go3RydP9_uhICh0iHFgOXyKXgX7f#scroll
 
 To do:
 -add LR schedule
--gradient clipping
 """
 
 from collections import deque

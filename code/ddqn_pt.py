@@ -11,8 +11,6 @@ from gym.wrappers import RecordEpisodeStatistics
 from typing import NamedTuple
 
 from utils.models import Q_val, Q_duelling
-
-
 class Transition(NamedTuple):
     s: list
     a: float
