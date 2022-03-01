@@ -1,4 +1,5 @@
-from statistics import mean
+#currently reaches 200+ score on LunarLander in 322 episodes/130,000 timesteps
+#bit unstable but slowly gets there
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -90,23 +91,8 @@ class TD3():
 
         #Critic update
         with torch.no_grad():
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
             a_p = self.actor_target(s_p)
-            a_p = self.noisy_action(a_p)
-=======
-            a_p = self.actor(s_p)
             a_p = torch.from_numpy(self.noisy_action(a_p))
->>>>>>> 2c15b97ffa8945847e4b71f6fa529e6980dc90e2
-=======
-            a_p = self.actor(s_p)
-            a_p = torch.from_numpy(self.noisy_action(a_p))
->>>>>>> 2c15b97ffa8945847e4b71f6fa529e6980dc90e2
-=======
-            a_p = self.actor(s_p)
-            a_p = torch.from_numpy(self.noisy_action(a_p))
->>>>>>> 2c15b97ffa8945847e4b71f6fa529e6980dc90e2
             target_q1, target_q2 = self.critic_target(s_p, a_p)
             target_q = torch.min(target_q1, target_q2)
             y = r + self.gamma * target_q * (1 - d)
@@ -151,7 +137,7 @@ def main():
 
     s_t = env.reset()
 
-    for i in range(200000):
+    for i in range(300000):
         a_t = td3_agent.actor(torch.from_numpy(s_t)).detach()
         a_t = td3_agent.noisy_action(a_t)
         
