@@ -10,8 +10,6 @@ from collections import deque
 from gym.wrappers import RecordEpisodeStatistics
 from typing import NamedTuple
 
-from noisy_env import GaussianNoise
-
 from utils.models import Q_val, Q_duelling
 
 
