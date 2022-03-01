@@ -92,8 +92,13 @@ class TD3():
         with torch.no_grad():
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
             a_p = self.actor_target(s_p)
             a_p = self.noisy_action(a_p)
+=======
+            a_p = self.actor(s_p)
+            a_p = torch.from_numpy(self.noisy_action(a_p))
+>>>>>>> 2c15b97ffa8945847e4b71f6fa529e6980dc90e2
 =======
             a_p = self.actor(s_p)
             a_p = torch.from_numpy(self.noisy_action(a_p))
