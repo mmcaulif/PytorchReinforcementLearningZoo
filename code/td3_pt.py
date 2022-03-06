@@ -50,6 +50,7 @@ class TD3():
         debug_act_high=[],
         debug_act_low=[]):
 
+        self.environment = environment
         self.buffer_size = buffer_size
         self.batch_size = batch_size
         self.tau = tau
@@ -77,9 +78,9 @@ class TD3():
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=c_lr)
 
-    def noisy_action(self, a_t):
-        noise = (torch.randn_like(a_t) * self.target_noise_clip).clamp(-self.target_policy_noise, self.target_policy_noise)
-        return (a_t + noise).clamp(self.act_low,self.act_high).numpy()
+        self.EPS_END = 0.05
+        self.EPS = 0.9
+        self.EPS_DECAY = 0.999
 
     def update(self, batch, i):
         s = torch.from_numpy(np.array(batch.s)).type(torch.float32)
@@ -117,7 +118,21 @@ class TD3():
             for target_param, param in zip(self.actor_target.parameters(), self.actor.parameters()):
                 target_param.data.copy_(param.data * self.tau + target_param.data * (1.0 - self.tau))
 
-        return critic_loss
+        return critic_loss    
+
+    def noisy_action(self, a_t):
+        noise = (torch.randn_like(a_t) * self.target_noise_clip).clamp(-self.target_policy_noise, self.target_policy_noise)
+        return (a_t + noise).clamp(self.act_low,self.act_high).numpy()
+
+    def select_action(self, s):
+        self.EPS = max(self.EPS_END, self.EPS * self.EPS_DECAY)
+        if torch.rand(1) > self.EPS:
+            #a = self.actor(torch.tensor(s).float()).detach()
+            a = self.actor(torch.from_numpy(s).type(torch.float32)).detach()    #might be faster?
+        else:
+            a = torch.from_numpy(self.environment.action_space.sample()).type(torch.float32)
+
+        return a
 
 def main():
     #env_name = 'MountainCarContinuous-v0'
