@@ -3,7 +3,6 @@
 -Also try combine them
 -Start on report and include references!
 
--confirm that using dqn as the subclass for ciq works
--focus on understanding ciq's neural network and update function
--fix DQN so it works with lunar lander (unsure why its not)
--implement grad clipping
+-review ciq's neural network and update function
+-continue debugging ciq 
+-improve noise generator maybe?
