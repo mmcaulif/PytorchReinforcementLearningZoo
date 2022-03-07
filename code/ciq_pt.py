@@ -58,10 +58,9 @@ class Q_ciq(nn.Module):
 
     def forward(self, s, t_labels):
         z = self.encoder(s)  #comes out as a flattened tensor of length 128 (step * 32)
-        #t_p = self.logits_t(z)  #outputs as a step * num treatments tensor
-        t_labels = torch.zeros(t_labels.size())
+        t_p = self.logits_t(z)  #outputs as a step * num treatments tensor
         q = self.fc(torch.cat([z, t_labels], dim=-1))
-        return q, 0 #t_p   #just get the value of q for debugging purposes
+        return q, t_p
 
 class CIQ():
     def __init__(
@@ -153,7 +152,7 @@ def main():
 
     env_name = 'CartPole-v0'
     env = gym.make(env_name)
-    env = GaussianNoise(env, p=0.2) #at p = 0.1, learning is already stunted
+    env = GaussianNoise(env, p=0.0) #at p = 0.1, learning is already stunted
     
     ciq_agent = CIQ(env, Q_ciq(step=1)) #ciq paper is batch_size=32 and learning_rate=5e-4
     replay_buffer = deque(maxlen=1000000)
