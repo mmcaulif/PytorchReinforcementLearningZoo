@@ -61,8 +61,8 @@ class DDQN:
         with torch.no_grad():
             a_p = torch.argmax(self.q_func(s_p), dim = 1).unsqueeze(1)  #actions selected from local q
             q_p = self.q_target(s_p).gather(1, a_p)    #actions evaluated from target q
-            y = r + self.gamma * q_p.max(1)[0].view(self.batch_size, 1) * (1 - d)
-
+            y = r + self.gamma * q_p * (1 - d)
+            
         loss = F.mse_loss(q, y)
 
         self.optimizer.zero_grad()
