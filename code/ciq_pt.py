@@ -113,14 +113,15 @@ class CIQ():
             q_p = self.q_target(s_p, i_ghost)[0].gather(1, a_p)
             y = r + self.gamma * q_p * (1 - d)
 
-        loss = F.mse_loss(q, y)# +  F.binary_cross_entropy_with_logits(i_p, i_t)        
+        i_loss = F.binary_cross_entropy_with_logits(i_p, i_t)
+        loss = F.mse_loss(q, y) + i_loss     
 
         self.optimizer.zero_grad()
         loss.backward()
         clip_grad_norm_(self.q_func.parameters(), self.max_grad_norm)
         self.optimizer.step()
 
-        return loss
+        return loss, i_loss
 
     def hard_update(self):
         self.q_target = copy.deepcopy(self.q_func)
@@ -148,11 +149,11 @@ class Transition(NamedTuple):
     t: int
 
 def main():
-    wandb.init(project="fyp-ciq", entity="manusft")
+    #wandb.init(project="fyp-ciq", entity="manusft")
 
     env_name = 'CartPole-v0'
     env = gym.make(env_name)
-    env = GaussianNoise(env, p=0.0) #at p = 0.1, learning is already stunted
+    env = GaussianNoise(env, p=0.1) #at p = 0.1, learning is already stunted for vanilla dqn
     
     ciq_agent = CIQ(env, Q_ciq(step=1)) #ciq paper is batch_size=32 and learning_rate=5e-4
     replay_buffer = deque(maxlen=1000000)
@@ -173,7 +174,7 @@ def main():
             
             if i % ciq_agent.train_freq == 0:
                 batch = Transition(*zip(*random.sample(replay_buffer, k=ciq_agent.batch_size)))
-                ciq_agent.update(batch)
+                _, i_loss = ciq_agent.update(batch)
                 ciq_agent.soft_update()
                 
             #if i % ciq_agent.target_update == 0:
@@ -191,8 +192,8 @@ def main():
 
         s_t = s_tp1
     
-        if i % 1000 == 0 and i > 0:
-            wandb.log({"Average episodic reward":torch.Tensor(episodic_rewards).mean()})
+        #if i % 1000 == 0 and i > 0:
+        #    wandb.log({"Average episodic reward":torch.Tensor(episodic_rewards).mean()})
 
 if __name__ == "__main__":
    # stuff only to run when not called via 'import' here
