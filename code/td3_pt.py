@@ -8,8 +8,10 @@ import gym
 import copy
 from gym.wrappers import RecordEpisodeStatistics
 
-from utils.models import td3_Actor, td3_Critic
-#from PytorchContinousRL.code.utils.models import td3_Actor, td3_Critic
+try:
+    from utils.models import td3_Actor, td3_Critic
+except:
+    from PytorchContinousRL.code.utils.models import td3_Actor, td3_Critic
 
 #from utils.memory import Memory
 
