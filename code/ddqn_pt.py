@@ -85,23 +85,26 @@ class DDQN:
         return a
 
 def main():
-    env_name = "CartPole-v0"
+    #env_name = "CartPole-v0"
+    env_name = "LunarLander-v2"
     env = gym.make(env_name)
     env = RecordEpisodeStatistics(env)
 
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.n    #shape[0]
 
-    replay_buffer = deque(maxlen=1000000)
+    replay_buffer = deque(maxlen=10000)
 
-    dqn_agent = DDQN(env, Q_val(obs_dim, act_dim), train_after=50000)
+    #net = Q_val(obs_dim, act_dim)
+    net = Q_duelling(obs_dim, act_dim)
+    dqn_agent = DDQN(env, net, train_after=250, target_update=300, batch_size=32, verbose=2000, learning_rate=0.004)    #hyperparameters for lunarlander
 
     episodes = 0
     s_t = env.reset()
 
-    episodic_rewards = deque(maxlen=10)
+    episodic_rewards = deque(maxlen=20)
 
-    for i in range(300000):
+    for i in range(1000000):
         a_t = dqn_agent.select_action(s_t)
         s_tp1, r_t, done, info = env.step(a_t)
         replay_buffer.append([s_t, a_t, r_t, s_tp1, done])
@@ -116,7 +119,7 @@ def main():
                 dqn_agent.update_target()
             
             if i % dqn_agent.verbose == 0:
-                avg_r = sum(episodic_rewards) / 10
+                avg_r = sum(episodic_rewards) / len(episodic_rewards)
                 print(f"Episodes: {episodes} | Timestep: {i} | Avg. Reward: {avg_r}, [{len(episodic_rewards)}]")
 
         if done:
