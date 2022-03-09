@@ -31,6 +31,7 @@ class DDQN:
         verbose=500,
         learning_rate=1e-4,
         max_grad_norm=10,
+        tau=5e-3
     ):
         self.environment = environment
         self.q_func = network
@@ -42,6 +43,7 @@ class DDQN:
         self.batch_size = batch_size
         self.optimizer = torch.optim.Adam(self.q_func.parameters(), lr=learning_rate)
         self.max_grad_norm = max_grad_norm
+        self.tau = tau
 
         self.EPS_END = 0.05
         self.EPS = 0.9
@@ -50,10 +52,10 @@ class DDQN:
         self.verbose = verbose
 
     def update(self, batch):
-        s = torch.from_numpy(np.array(batch.s))
-        a = torch.from_numpy(np.array(batch.a)).unsqueeze(1)
+        s = torch.from_numpy(np.array(batch.s)).type(torch.float32)
+        a = torch.from_numpy(np.array(batch.a)).unsqueeze(1).type(torch.float32)
         r = torch.FloatTensor(batch.r).unsqueeze(1)
-        s_p = torch.from_numpy(np.array(batch.s_p))
+        s_p = torch.from_numpy(np.array(batch.s_p)).type(torch.float32)
         d = torch.IntTensor(batch.d).unsqueeze(1)
 
         q = self.q_func(s).gather(1, a.long())
@@ -72,13 +74,17 @@ class DDQN:
 
         return loss
 
-    def update_target(self):
+    def hard_update(self):
         self.q_target = copy.deepcopy(self.q_func)
+
+    def soft_update(self):
+        for target_param, param in zip(self.q_target.parameters(), self.q_func.parameters()):
+                target_param.data.copy_(param.data * self.tau + target_param.data * (1.0 - self.tau))
 
     def select_action(self, s):
         self.EPS = max(self.EPS_END, self.EPS * self.EPS_DECAY)
         if torch.rand(1) > self.EPS:
-            a = torch.argmax(self.q_func(torch.from_numpy(s)).detach()).numpy()
+            a = torch.argmax(self.q_func(torch.from_numpy(s).type(torch.float32)).detach()).numpy()
         else:
             a = self.environment.action_space.sample()
 
@@ -116,7 +122,7 @@ def main():
                 loss = dqn_agent.update(batch)
 
             if i % dqn_agent.target_update == 0:
-                dqn_agent.update_target()
+                dqn_agent.hard_update()
             
             if i % dqn_agent.verbose == 0:
                 avg_r = sum(episodic_rewards) / len(episodic_rewards)
