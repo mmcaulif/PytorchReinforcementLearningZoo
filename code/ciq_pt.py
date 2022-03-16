@@ -12,6 +12,9 @@ import numpy as np
 from gym import Wrapper
 import wandb
 
+from ddqn_pt import DDQN
+from utils.models import Q_val
+
 class GaussianNoise(Wrapper):
     def __init__(self, env, p=0.1, var=0.5):
         super().__init__(env)
@@ -102,10 +105,10 @@ class CIQ():
         pass
 
     def update(self, batch):
-        s = torch.from_numpy(np.array(batch.s))
-        a = torch.from_numpy(np.array(batch.a)).unsqueeze(1)
+        s = torch.from_numpy(np.array(batch.s)).type(torch.float32)
+        a = torch.from_numpy(np.array(batch.a)).unsqueeze(1).type(torch.float32)
         r = torch.FloatTensor(batch.r).unsqueeze(1)
-        s_p = torch.from_numpy(np.array(batch.s_p))
+        s_p = torch.from_numpy(np.array(batch.s_p)).type(torch.float32)
         d = torch.IntTensor(batch.d).unsqueeze(1)
         i_t = torch.from_numpy(np.array(batch.t)).type(torch.float32)
 
@@ -138,7 +141,7 @@ class CIQ():
     def select_action(self, s):
         self.EPS = max(self.EPS_END, self.EPS * self.EPS_DECAY)
         if torch.rand(1) > self.EPS:
-            q = self.q_func(torch.from_numpy(s), torch.Tensor([1,0]))[0].detach()
+            q = self.q_func(torch.from_numpy(s).type(torch.float32), torch.Tensor([1,0]))[0].detach()
             a = torch.argmax(q).numpy()
         else:
             a = self.environment.action_space.sample()
@@ -154,13 +157,29 @@ class Transition(NamedTuple):
     t: int
 
 def main():
-    #wandb.init(project="fyp-ciq", entity="manusft")
-
+    wandb.init(project="fyp-ciq", entity="manusft")
+    P = 0.1
+    vanilla = True
     env_name = 'CartPole-v0'
+    wandb.config = {
+        "env_name": env_name,
+        "P": P,
+        "Vanilla q network": vanilla
+    }
+
     env = gym.make(env_name)
-    env = GaussianNoise(env, p=0.1) #at p = 0.1, learning is already stunted for vanilla dqn
+    env = GaussianNoise(env, p=P) #at p = 0.1, learning is already stunted for vanilla dqn
+
+    obs_dim = env.observation_space.shape[0]
+    act_dim = env.action_space.n    #shape[0]
     
-    ciq_agent = CIQ(env, Q_ciq(step=1)) #ciq paper is batch_size=32 and learning_rate=5e-4
+    if vanilla:
+        print("Using vanilla ddqn")
+        ciq_agent = DDQN(env, Q_val(obs_dim, act_dim), learning_rate=1e-4)
+    else:
+        print("Using ciq-ddqn")
+        ciq_agent = CIQ(env, Q_ciq(step=1), learning_rate=2e-4) #ciq paper is batch_size=32 and learning_rate=5e-4
+
     replay_buffer = deque(maxlen=1000000)
 
     episodic_rewards = deque(maxlen=10)
@@ -168,7 +187,7 @@ def main():
     episodes = 0
     s_t = env.reset()
 
-    for i in range(200000):
+    for i in range(500000):
         #a_t = env.action_space.sample()
         a_t = ciq_agent.select_action(s_t)
         s_tp1, r_t, done, i_t = env.step(a_t)
@@ -179,7 +198,7 @@ def main():
             
             if i % ciq_agent.train_freq == 0:
                 batch = Transition(*zip(*random.sample(replay_buffer, k=ciq_agent.batch_size)))
-                _, i_loss = ciq_agent.update(batch)
+                loss = ciq_agent.update(batch)
                 ciq_agent.soft_update()
                 
             #if i % ciq_agent.target_update == 0:
@@ -197,8 +216,9 @@ def main():
 
         s_t = s_tp1
     
-        #if i % 1000 == 0 and i > 0:
-        #    wandb.log({"Average episodic reward":torch.Tensor(episodic_rewards).mean()})
+        if i % 1000 == 0 and i > 0:
+            #wandb.log({f"Average episodic reward, P={P}":torch.Tensor(episodic_rewards).mean()})
+            wandb.log({"dqn long train":torch.Tensor(episodic_rewards).mean()})
 
 if __name__ == "__main__":
    # stuff only to run when not called via 'import' here
