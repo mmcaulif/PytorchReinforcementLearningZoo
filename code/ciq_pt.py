@@ -59,7 +59,12 @@ class Q_ciq(nn.Module):
     def forward(self, s, t_labels):
         z = self.encoder(s)  #comes out as a flattened tensor of length 128 (step * 32)
         t_p = self.logits_t(z)  #outputs as a step * num treatments tensor
-        q = self.fc(torch.cat([z, t_labels], dim=-1))
+        
+        if self.training:
+            q = self.fc(torch.cat([z, t_labels], dim=-1))
+        else:
+            q = self.fc(torch.cat([z, t_p], dim=-1))
+
         return q, t_p
 
 class CIQ():
