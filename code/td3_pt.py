@@ -8,10 +8,11 @@ import gym
 import copy
 from gym.wrappers import RecordEpisodeStatistics
 
-try:
-    from utils.models import td3_Actor, td3_Critic
-except:
-    from PytorchContinousRL.code.utils.models import td3_Actor, td3_Critic
+from utils.models import td3_Actor, td3_Critic
+#try:
+#    from utils.models import td3_Actor, td3_Critic
+#except:
+#    from PytorchContinousRL.code.utils.models import td3_Actor, td3_Critic
 
 #from utils.memory import Memory
 
@@ -45,6 +46,7 @@ class TD3():
         batch_size=100, 
         tau=0.005, 
         gamma=0.99, 
+        train_after=0,
         policy_delay=2,
         target_policy_noise=0.2, 
         target_noise_clip=0.5,
@@ -57,6 +59,7 @@ class TD3():
         self.batch_size = batch_size
         self.tau = tau
         self.gamma = gamma
+        self.train_after = train_after
         self.policy_delay = policy_delay
         self.target_policy_noise = target_policy_noise
         self.target_noise_clip = target_noise_clip
@@ -143,13 +146,20 @@ def main():
     env = gym.make(env_name)
     env = RecordEpisodeStatistics(env)
 
-    replay_buffer = deque(maxlen=1000000)
 
     c_losses = deque(maxlen=100)
     episodic_rewards = deque(maxlen=10)
     episodes = 0
 
-    td3_agent = TD3(environment=env, actor=td3_Actor, critic=td3_Critic)
+    td3_agent = TD3(environment=env,    #taken from sb3 zoo
+        actor=td3_Actor,
+        critic=td3_Critic, 
+        buffer_size=200000, 
+        gamma=0.98, 
+        train_after=1000,
+        target_policy_noise=0.1)
+
+    replay_buffer = deque(maxlen=td3_agent.buffer_size)
 
     s_t = env.reset()
 
@@ -161,7 +171,7 @@ def main():
         
         replay_buffer.append([s_t, a_t, r_t, s_tp1, done])
 
-        if len(replay_buffer) >= 100:
+        if len(replay_buffer) >= 100 and i > td3_agent.train_after:
             batch = Transition(*zip(*random.sample(replay_buffer, k=100)))
             loss = td3_agent.update(batch, i)
 
