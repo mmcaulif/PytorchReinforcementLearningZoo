@@ -1,18 +1,22 @@
 import gym
 import numpy as np
 
-from stable_baselines3 import TD3, DQN
+from stable_baselines3 import TD3, DQN, A2C
 
 env_name = "Pendulum-v1"
 #env_name = "BipedalWalker-v3"
 #env_name = "LunarLanderContinuous-v2"
 env_name = "LunarLander-v2"
+env_name = "CartPole-v1"
 env = gym.make(env_name)
 
 #model = TD3("MlpPolicy", env, verbose=1)
 #model.learn(total_timesteps=1000000, log_interval=10)
 
-model = DQN("MlpPolicy", env, verbose=1)
+#model = DQN("MlpPolicy", env, verbose=1)
+#model.learn(total_timesteps=1000000, log_interval=25)
+
+model = A2C("MlpPolicy", env, verbose=1)
 model.learn(total_timesteps=1000000, log_interval=25)
 
 """

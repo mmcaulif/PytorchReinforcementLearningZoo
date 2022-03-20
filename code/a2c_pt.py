@@ -1,4 +1,3 @@
-from turtle import done
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -29,13 +28,10 @@ class Model(torch.nn.Module):
             nn.Softmax(dim=-1)
         )
 
-    def value(self, s):
-        out = self.critic(s)
-        return out
-
-    def policy(self, s):
-        out = self.actor(s)
-        return out
+    def forward(self, s):
+        v = self.critic(s)
+        pi = self.actor(s)
+        return v, pi
 
 class Memory(object):
     def __init__(self):
@@ -63,66 +59,84 @@ def select_action(x):
     x_dist = Categorical(x)
     return x_t, x_dist.log_prob(torch.tensor(x_t)), x_dist.entropy().mean()
 
-def rollout(s_t, n_steps, buffer):
+"""def rollout(s_t, n_steps, buffer):
     final_r = 0
 
     for i in range(n_steps):
-        a_pi = policy(torch.from_numpy(s_t).float())
+        a_pi = a2c_model(torch.from_numpy(s_t).float())[1]
         a_t = int(torch.multinomial(a_pi, 1).detach())
         s_tp1, r, d, info = env.step(a_t)
         buffer.push(s_t, a_t, r, a_pi)
+        s_t = s_tp1
         if d:
-            s_tp1 = env.reset()
+            s_t = env.reset()
             print(f'Episode reward: {int(info["episode"]["r"])}')
             break
 
-        s_t = s_tp1
-
     if not d:
-        final_r = value(torch.from_numpy(s_tp1).float())  
+        final_r, _ = a2c_model(torch.from_numpy(s_tp1).float())  
 
-    return s_t, buffer, final_r
+    return s_t, buffer, final_r"""
 
 env = RecordEpisodeStatistics(gym.make("CartPole-v1"))
 s_t = env.reset()
 
 a2c_model = Model(4, 2)
-policy = a2c_model.policy
-value = a2c_model.value
-optimizer = torch.optim.RMSprop(a2c_model.parameters(), lr=7e-3, eps=1e-5)  #should be lr=7e-3
+optimizer = torch.optim.Adam(a2c_model.parameters(), lr=0.0007, eps=1e-5)
+lambda1 = lambda epoch: 0.0003 * (10000 - epoch)/10000
+#scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,lr_lambda=lambda1)
 buffer = Memory()
 
-for i in range(100000):
-    #env.render()
+def calc_returns(r_rollout, final_r):
+    discounted_r = torch.zeros_like(r_rollout)
+    for t in reversed(range(0, len(r_rollout))):
+        final_r = final_r *  0.99 + r_rollout[t]
+        discounted_r[t] = final_r
+    return discounted_r
+
+avg_r = deque(maxlen=50)
+count = 0
+
+for i in range(50000):
     
-    s_t, buffer, R = rollout(s_t, n_steps=5, buffer=buffer)
+    #s_t, buffer, r_trajectory = rollout(s_t, n_steps=5, buffer=buffer)
+
+    r_trajectory = 0
+
+    for i in range(5):
+        a_pi = a2c_model(torch.from_numpy(s_t).float())[1]
+        a_t = int(torch.multinomial(a_pi, 1).detach())
+        s_tp1, r, d, info = env.step(a_t)
+        buffer.push(s_t, a_t, r, a_pi)
+        s_t = s_tp1
+        if d:
+            s_t = env.reset()
+            count += 1
+            avg_r.append(int(info["episode"]["r"]))
+            if count % 5 == 0:
+                print(f'Episode: {count}| Average reward: {sum(avg_r)/len(avg_r)} | [{len(avg_r)}]')
+            break
+
+    if not d:
+        r_trajectory, _ = a2c_model(torch.from_numpy(s_tp1).float())  
     
     s_rollout, a_rollout, r_rollout, pi_rollout = buffer.pop_all()
     
-    r_trajectory = torch.zeros_like(r_rollout)
-
-    for t in reversed(range(0, len(r_rollout))):
-        R *= 0.99
-        R += r_rollout[t]
-        r_trajectory[t] = R
+    Q = calc_returns(r_rollout, r_trajectory)
         
-    V = value(s_rollout.float()).squeeze(-1)
+    V = a2c_model(s_rollout.float())[0].squeeze(-1)
     
-    """print('Calculated return: ', r_trajectory.detach())
-    print('Critic estimates: ',V.detach(), '\n')"""
-    
-    critic_loss = F.mse_loss(r_trajectory, V)
-    #print(critic_loss)
+    critic_loss = F.mse_loss(Q, V)
     
     dist_rollout = Categorical(pi_rollout)   
 
     entropy = dist_rollout.entropy().mean()
-    adv = R - V
+    adv = Q - V.detach()
     log_probs = dist_rollout.log_prob(a_rollout)
     actor_loss = -(log_probs * adv.detach()).mean()
 
+    #print(actor_loss, critic_loss, entropy, '\n')
     loss = actor_loss + (critic_loss * 0.5) - (entropy * 0.01)
-    #loss = critic_loss
 
     optimizer.zero_grad()
     loss.backward()
