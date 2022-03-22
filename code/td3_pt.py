@@ -126,7 +126,8 @@ class TD3():
         return critic_loss    
 
     def noisy_action(self, a_t):
-        noise = (torch.randn_like(a_t) * self.target_noise_clip).clamp(-self.target_policy_noise, self.target_policy_noise)
+        mean=torch.zeros_like(a_t)
+        noise = torch.normal(mean=mean, std=0.1).clamp(-self.target_noise_clip, self.target_noise_clip)
         return (a_t + noise).clamp(self.act_low,self.act_high).numpy()
 
     def select_action(self, s):
@@ -146,7 +147,6 @@ def main():
     env = gym.make(env_name)
     env = RecordEpisodeStatistics(env)
 
-
     c_losses = deque(maxlen=100)
     episodic_rewards = deque(maxlen=10)
     episodes = 0
@@ -156,7 +156,7 @@ def main():
         critic=td3_Critic, 
         buffer_size=200000, 
         gamma=0.98, 
-        train_after=1000,
+        train_after=10000,
         target_policy_noise=0.1)
 
     replay_buffer = deque(maxlen=td3_agent.buffer_size)
