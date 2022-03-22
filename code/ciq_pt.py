@@ -40,13 +40,11 @@ class GaussianNoise(Wrapper):
 class Q_ciq(nn.Module):
     def __init__(self, step=4, num_treatment=2, act_dims=2, obs_dims=4):
         super(Q_ciq, self).__init__()
-        self.step = step, 
-        self.num_treatment = num_treatment,
         
         self.encoder = nn.Sequential(nn.Linear(obs_dims, 64),
                                      nn.ReLU(),
                                      nn.Linear(64, 64),
-                                     nn.ReLU(),    #layer added for debugging
+                                     #nn.ReLU(),    #layer added for debugging
                                      )
 
         self.logits_t = nn.Sequential(nn.Linear(64, 32),
