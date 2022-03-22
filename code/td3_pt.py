@@ -50,6 +50,7 @@ class TD3():
         policy_delay=2,
         target_policy_noise=0.2, 
         target_noise_clip=0.5,
+        EPS_END=0.05,
         debug_dim=[],
         debug_act_high=[],
         debug_act_low=[]):
@@ -83,7 +84,7 @@ class TD3():
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=c_lr)
 
-        self.EPS_END = 0.05
+        self.EPS_END = EPS_END
         self.EPS = 0.9
         self.EPS_DECAY = 0.999
 
@@ -157,7 +158,8 @@ def main():
         buffer_size=200000, 
         gamma=0.98, 
         train_after=10000,
-        target_policy_noise=0.1)
+        target_policy_noise=0.1,
+        EPS_END=0.1)
 
     replay_buffer = deque(maxlen=td3_agent.buffer_size)
 
