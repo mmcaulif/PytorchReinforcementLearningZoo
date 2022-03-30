@@ -80,10 +80,10 @@ def calc_returns(r_rollout, final_r):
         discounted_r[t] = final_r
     return discounted_r
 
-avg_r = deque(maxlen=50)
+avg_r = deque(maxlen=200)
 count = 0
 
-for j in range(50000):
+for i in range(50000):
     
     #s_t, buffer, r_trajectory = rollout(s_t, n_steps=5, buffer=buffer)
 
@@ -99,8 +99,8 @@ for j in range(50000):
             s_t = env.reset()
             count += 1
             avg_r.append(int(info["episode"]["r"]))
-            if count % 5 == 0:
-                print(f'Episode: {count} | Average reward: {sum(avg_r)/len(avg_r)} | Rollouts: {j} | [{len(avg_r)}]')
+            if count % 20 == 0:
+                print(f'Episode: {count} | Average reward: {sum(avg_r)/len(avg_r)} | Rollouts: {i} | [{len(avg_r)}]')
             break
 
     if not d:
