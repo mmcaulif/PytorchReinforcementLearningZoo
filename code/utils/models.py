@@ -102,4 +102,6 @@ class Q_duelling(nn.Module):
 
 	def forward(self, state):
 		q = F.relu(self.l1(state))
-		return self.val(q) + self.adv(q)
+		v = self.val(q)
+		a = self.adv(q)
+		return v + (a - a.mean())
