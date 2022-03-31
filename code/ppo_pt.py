@@ -1,3 +1,4 @@
+import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -68,8 +69,9 @@ s_t = env.reset()
 obs_dim = env.observation_space.shape[0]
 act_dim = env.action_space.n
 
-a2c_model = Model(obs_dim, act_dim)
-optimizer = torch.optim.Adam(a2c_model.parameters(), lr=0.0007, eps=1e-5)   #ppo optimiser
+ppo_model = Model(obs_dim, act_dim)
+old_model = copy.deepcopy(ppo_model)
+optimizer = torch.optim.Adam(ppo_model.parameters(), lr=0.0007, eps=1e-5)   #ppo optimiser
 
 buffer = Memory()
 
@@ -82,13 +84,16 @@ def calc_returns(r_rollout, final_r):
 
 avg_r = deque(maxlen=200)
 count = 0
+#clip_range = 0.2
 
 for i in range(50000):
 
     r_trajectory = 0
 
-    while buffer.qty <= 5:
-        a_pi = a2c_model(torch.from_numpy(s_t).float())[1]
+    while buffer.qty <= 100:
+        a_pi = ppo_model(torch.from_numpy(s_t).float())[1]
+        old_pi = old_model(torch.from_numpy(s_t).float())[1]
+
         a_t = int(torch.multinomial(a_pi, 1).detach())
         s_tp1, r, d, info = env.step(a_t)
         buffer.push(s_t, a_t, r, a_pi)
@@ -102,28 +107,34 @@ for i in range(50000):
             break
 
     if not d:
-        r_trajectory, _ = a2c_model(torch.from_numpy(s_tp1).float())  
+        r_trajectory, _ = ppo_model(torch.from_numpy(s_tp1).float())  
     
     s_rollout, a_rollout, r_rollout, pi_rollout = buffer.pop_all()
     
     Q = calc_returns(r_rollout, r_trajectory)
         
-    V = a2c_model(s_rollout.float())[0].squeeze(-1)
+    V = ppo_model(s_rollout.float())[0].squeeze(-1)
     
     critic_loss = F.mse_loss(Q, V)
     
     dist_rollout = Categorical(pi_rollout)   
 
     entropy = dist_rollout.entropy().mean() #ppo entropy loss
-    adv = Q - V.detach()
+    adv = Q - V
+
+    if len(adv) > 1: adv = (adv - adv.mean())/adv.std() #ppo advantage normalisations
 
     log_probs = dist_rollout.log_prob(a_rollout)
+    #ratio = torch.exp(old_probs - log_probs)   #ppo loss function
+    #clipped_loss = torch.clamp(ratio, 1-clip_range, 1+clip_range) * adv.detach()
+    #actor_loss = -(torch.min(ratio * adv.detach(), clipped_ratio)).mean()
+
     actor_loss = -(log_probs * adv.detach()).mean()
     loss = actor_loss + (critic_loss * 0.5) - (entropy * 0.01)
 
     optimizer.zero_grad()
     loss.backward()
-    torch.nn.utils.clip_grad_norm_(a2c_model.parameters(), 0.5) #ppo gradient clipping
+    torch.nn.utils.clip_grad_norm_(ppo_model.parameters(), 0.5) #ppo gradient clipping
     optimizer.step()
 
     
