@@ -36,27 +36,29 @@ class Model(torch.nn.Module):
 
 class Memory(object):
     def __init__(self):
-        self.states, self.actions, self.rewards, self.policies = [], [], [], []
+        self.states, self.actions, self.rewards, self.policies, self.dones = [], [], [], [], []
         self.qty = 0
     
-    def push(self, state, action, reward, policy):
+    def push(self, state, action, reward, policy, done):
         self.states.append(state)
         self.actions.append(action)
         self.rewards.append(reward)
         self.policies.append(policy)
+        self.dones.append(done)
         self.qty += 1
     
     def pop_all(self):
         states = torch.as_tensor(np.array(self.states))
         actions = torch.LongTensor(self.actions)
-        rewards = torch.FloatTensor(self.rewards).unsqueeze(1)
+        rewards = torch.FloatTensor(self.rewards)
         policies = torch.stack(self.policies).float()
+        dones = torch.IntTensor(self.dones)
         qty = self.qty
         
-        self.states, self.actions, self.rewards, self.policies = [], [], [], []
+        self.states, self.actions, self.rewards, self.policies, self.dones = [], [], [], [], []
         self.qty = 0
         
-        return states, actions, rewards.squeeze(-1), policies, qty
+        return states, actions, rewards, policies, dones, qty
 
     
 def select_action(x):
@@ -79,27 +81,27 @@ buffer = Memory()
 
 def calc_returns(r_rollout, final_r):
     discounted_r = torch.zeros_like(r_rollout)
-    gae_tm1 = 0
-    for t in reversed(range(0, len(r_rollout))):
+    for t in reversed(range(len(r_rollout))):
         final_r = final_r *  0.99 + r_rollout[t]
-        #discounted_r[t] = gae_tm1 = final_r * 0.99 * 0.95 * gae_tm1    #attempt at ppo
         discounted_r[t] = final_r
     return discounted_r
 
-def calc_gae(r_rollout, s_rollout, final_r):
-    adv_rollout = torch.zeros_like(r_rollout)
-    gae_tm1 = 0
-    for t in reversed(range(0, len(r_rollout))):
-        if t == len(r_rollout) -1:
-            last_val = final_r
+def calc_gae(r_rollout, s_rollout, d_rollout, final_r): #Still need to understand!
+    gae_returns = torch.zeros_like(r_rollout)
+    gae = 0
+    for t in reversed(range(len(r_rollout))):
+        if t == len(r_rollout) - 1:
+            v_tp1 = final_r
         else:
-            last_val = ppo_model(s_rollout[t+1])[0].squeeze(-1)
-        td = last_val *  0.99 + r_rollout[t] - ppo_model(s_rollout[t])[0].squeeze(-1)
-        adv_rollout[t] = gae_tm1 = td * 0.99 * 0.95 * gae_tm1
+            v_tp1 = ppo_model(s_rollout[t+1])[0].squeeze(-1)
+        v_t = ppo_model(s_rollout[t])[0].squeeze(-1)
+        y = r_rollout[t] + v_tp1 * 0.99 * (1 - d_rollout[t])
+        td = y - v_t
+        gae = td + 0.99 * 0.95 * gae * (1 - d_rollout[t])
 
-    gae_rollout = adv_rollout + ppo_model(s_rollout)[0].squeeze(-1)
-    #print(gae_rollout.size())
-    return gae_rollout
+        gae_returns[t] = gae + v_t
+
+    return gae_returns
 
 avg_r = deque(maxlen=50)
 count = 0
@@ -115,7 +117,7 @@ for i in range(50000):
         #a_t = int(torch.multinomial(a_pi, 1).detach())
         a_t, _, _ = select_action(a_pi)
         s_tp1, r, d, info = env.step(a_t)
-        buffer.push(s_t, a_t, r, a_pi)
+        buffer.push(s_t, a_t, r, a_pi, d)
         s_t = s_tp1
         if d:
             s_t = env.reset()
@@ -129,12 +131,13 @@ for i in range(50000):
         r_trajectory, _ = ppo_model(torch.from_numpy(s_tp1).float())  
     
     #begin training
-    s_rollout, a_rollout, r_rollout, pi_rollout, len_rollout = buffer.pop_all()
+    s_rollout, a_rollout, r_rollout, pi_rollout, d_rollout, len_rollout = buffer.pop_all()
 
-    #Q_rollout = calc_gae(r_rollout, s_rollout, r_trajectory).unsqueeze(-1).detach()
-    Q_rollout = calc_returns(r_rollout, r_trajectory).unsqueeze(-1).detach()
+    #Q_rollout = calc_returns(r_rollout, r_trajectory).detach()
+    Q_rollout = calc_gae(r_rollout, s_rollout, d_rollout, r_trajectory).detach()
+    #print('Returns: ', Q_rollout, '\nGAE Returns: ', gae_rollout, '\n')
 
-    V_rollout = ppo_model(s_rollout.float())[0].unsqueeze(-1)
+    V_rollout = ppo_model(s_rollout.float())[0]#.unsqueeze(-1)
 
     old_probs = Categorical(pi_rollout).log_prob(a_rollout).detach()
 
@@ -144,9 +147,7 @@ for i in range(50000):
         new_dist = Categorical(new_pi)
 
         #critic
-        #print(Q_rollout.size())
-        #print(Q_rollout[i].size(), new_v.size())
-        critic_loss = F.mse_loss(Q_rollout[i], new_v)
+        critic_loss = F.mse_loss(Q_rollout[i], new_v.squeeze(-1))
         
         #actor
         log_probs = new_dist.log_prob(a_rollout[i])
