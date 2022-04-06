@@ -87,6 +87,8 @@ def calc_returns(r_rollout, final_r):
     return discounted_r
 
 def calc_gae(r_rollout, s_rollout, d_rollout, final_r): #Still need to understand!
+    gamma = 0.98
+    lmbda = 0.8
     gae_returns = torch.zeros_like(r_rollout)
     gae = 0
     for t in reversed(range(len(r_rollout))):
@@ -95,9 +97,9 @@ def calc_gae(r_rollout, s_rollout, d_rollout, final_r): #Still need to understan
         else:
             v_tp1 = ppo_model(s_rollout[t+1])[0].squeeze(-1)
         v_t = ppo_model(s_rollout[t])[0].squeeze(-1)
-        y = r_rollout[t] + v_tp1 * 0.99 * (1 - d_rollout[t])
+        y = r_rollout[t] + v_tp1 * gamma * (1 - d_rollout[t])
         td = y - v_t
-        gae = td + 0.99 * 0.95 * gae * (1 - d_rollout[t])
+        gae = td + gamma * lmbda * gae * (1 - d_rollout[t])
 
         gae_returns[t] = gae + v_t
 
@@ -106,12 +108,13 @@ def calc_gae(r_rollout, s_rollout, d_rollout, final_r): #Still need to understan
 avg_r = deque(maxlen=50)
 count = 0
 clip_range = 0.2
+batch_size = 32
 
 for i in range(50000):
 
     r_trajectory = 0
 
-    while buffer.qty <= 200:
+    while buffer.qty <= 32:
         a_pi = ppo_model(torch.from_numpy(s_t).float())[1]
 
         #a_t = int(torch.multinomial(a_pi, 1).detach())
@@ -137,23 +140,27 @@ for i in range(50000):
     Q_rollout = calc_gae(r_rollout, s_rollout, d_rollout, r_trajectory).detach()
     #print('Returns: ', Q_rollout, '\nGAE Returns: ', gae_rollout, '\n')
 
-    V_rollout = ppo_model(s_rollout.float())[0]#.unsqueeze(-1)
+    V_rollout = ppo_model(s_rollout.float())[0]
 
     old_probs = Categorical(pi_rollout).log_prob(a_rollout).detach()
+    indexes = np.arange(len_rollout)
 
-    for i in range(len_rollout):  
+    for iter in range(0, len_rollout, batch_size):  
+        iter_end = iter + batch_size
+        i = indexes[iter:iter_end]
+
         #new outputs
-        new_v, new_pi = ppo_model(s_rollout[i])
+        new_v, new_pi = ppo_model(s_rollout[iter:iter_end])
         new_dist = Categorical(new_pi)
 
         #critic
-        critic_loss = F.mse_loss(Q_rollout[i], new_v.squeeze(-1))
+        critic_loss = F.mse_loss(Q_rollout[iter:iter_end], new_v.squeeze(-1))
         
         #actor
-        log_probs = new_dist.log_prob(a_rollout[i])
+        log_probs = new_dist.log_prob(a_rollout[iter:iter_end])
         entropy = new_dist.entropy().mean()   #ppo entropy loss
         
-        adv = Q_rollout[i] - V_rollout[i].detach()
+        adv = Q_rollout[iter:iter_end] - V_rollout[iter:iter_end].detach()
 
         #if len(adv) > 1: adv = (adv - adv.mean())/(adv.std() + 1e-8) #ppo minibatch advantage normalisations
 
@@ -161,7 +168,7 @@ for i in range(50000):
         clipped_ratio = torch.clamp(ratio, 1-clip_range, 1+clip_range)
         actor_loss = -(torch.min(ratio * adv, clipped_ratio * adv)).mean()
 
-        loss = actor_loss + (critic_loss * 0.5) - (entropy * 0.01)
+        loss = actor_loss + (critic_loss * 0.5) - (entropy * 0.00)  #zoo entropy coeff for cartpole
 
         optimizer.zero_grad()
         loss.backward()
