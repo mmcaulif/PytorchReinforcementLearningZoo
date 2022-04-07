@@ -6,7 +6,7 @@ import numpy as np
 import gym
 from collections import deque
 from gym.wrappers import RecordEpisodeStatistics
-#from utils.models import PPO_model
+from utils.models import PPO_model
 from utils.memory import Rollout_Memory
 
 #https://github.com/nikhilbarhate99/PPO-PyTorch/blob/master/PPO.py  shows off the ratios well
@@ -32,16 +32,9 @@ class PPO:
         self.n_steps = n_steps
         self.batch_size = batch_size
         self.verbose = verbose
-        self.learning_rate = learning_rate
+        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate, eps=1e-5)   #ppo optimiser
         self.clip_range = clip_range
         self.max_grad_norm = max_grad_norm
-
-        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=self.learning_rate, eps=1e-5)   #ppo optimiser
-
-    def select_action(self, s):
-        a_policy = self.network(torch.from_numpy(s).float())[1]
-        a = int(torch.multinomial(a_policy, 1).detach())
-        return a, a_policy
 
     def calc_gae(self, s_r, r_r, d_r, final_r): #Still need to understand!
         gae_returns = torch.zeros_like(r_r)
@@ -61,7 +54,8 @@ class PPO:
 
         return gae_returns
 
-    def update(self, s_r, a_r, r_r, pi_r, d_r, len, r_traj):
+    def update(self, data, r_traj):
+        s_r, a_r, r_r, pi_r, d_r, len = data
         Q_rollout = self.calc_gae(s_r, r_r, d_r, r_traj).detach()
 
         V_rollout = self.network(s_r.float())[0]
@@ -96,31 +90,17 @@ class PPO:
             self.optimizer.step()
 
             return loss
-
-class PPO_model(torch.nn.Module):
-    def __init__(self, input_size, action_size):
-        super(PPO_model, self).__init__()
         
-        self.critic = torch.nn.Sequential(
-            nn.Linear(input_size, 256),
-            nn.Linear(256, 1)
-        )
-        self.actor = torch.nn.Sequential(
-            nn.Linear(input_size, 256),
-            nn.Linear(256, action_size),
-            nn.Softmax(dim=-1)
-        )
-
-    def forward(self, s):
-        v = self.critic(s)
-        pi = self.actor(s)
-        return v, pi
+    def select_action(self, s):
+        a_policy = self.network(torch.from_numpy(s).float())[1]
+        a = int(torch.multinomial(a_policy, 1).detach())
+        return a, a_policy
 
 def main():
     env_name = "CartPole-v1"
     env = RecordEpisodeStatistics(gym.make(env_name))
     avg_r = deque(maxlen=50)
-    count = 0
+    episodes = 0
 
     buffer = Rollout_Memory()
     net = PPO_model(4, 2)
@@ -128,7 +108,7 @@ def main():
 
     s_t = env.reset()
     for i in range(50000):
-
+        r_trajectory = 0
         while buffer.qty <= ppo_agent.n_steps:
             a_t, a_pi = ppo_agent.select_action(s_t)
             s_tp1, r, d, info = env.step(a_t)
@@ -136,21 +116,17 @@ def main():
             s_t = s_tp1
             if d:
                 s_t = env.reset()
-                count += 1
+                episodes += 1
                 avg_r.append(int(info["episode"]["r"]))
-                if count % ppo_agent.verbose == 0:
-                    print(f'Episode: {count} | Average reward: {sum(avg_r)/len(avg_r)} | [{len(avg_r)}]')
+                if episodes % ppo_agent.verbose == 0:
+                    print(f'Episode: {episodes} | Average reward: {sum(avg_r)/len(avg_r)} | [{len(avg_r)}]')
                 break
 
-        if d:
-            r_trajectory = 0
-        else:
+        if not d:
             r_trajectory = ppo_agent.network(torch.from_numpy(s_tp1).float())[0]
         
-        #s_rollout, a_rollout, r_rollout, pi_rollout, d_rollout, len_rollout = buffer.pop_all()
-        #ppo_agent.update(s_rollout, a_rollout, r_rollout, pi_rollout, d_rollout, len_rollout, r_trajectory)
-        total_loss = ppo_agent.update(*buffer.pop_all(), r_trajectory)
-        #print(total_loss)
+        data = buffer.pop_all()
+        ppo_agent.update(data, r_trajectory)
 
 if __name__ == "__main__":
     # stuff only to run when not called via 'import' here
