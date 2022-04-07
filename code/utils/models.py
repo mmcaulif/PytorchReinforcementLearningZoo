@@ -105,3 +105,22 @@ class Q_duelling(nn.Module):
 		v = self.val(q)
 		a = self.adv(q)
 		return v + (a - a.mean())
+
+class PPO_model(torch.nn.Module):
+    def __init__(self, input_size, action_size):
+        super(PPO_model, self).__init__()
+        
+        self.critic = torch.nn.Sequential(
+            nn.Linear(input_size, 256),
+            nn.Linear(256, 1)
+        )
+        self.actor = torch.nn.Sequential(
+            nn.Linear(input_size, 256),
+            nn.Linear(256, action_size),
+            nn.Softmax(dim=-1)
+        )
+
+    def forward(self, s):
+        v = self.critic(s)
+        pi = self.actor(s)
+        return v, pi

@@ -92,10 +92,9 @@ def calc_gae(r_rollout, s_rollout, d_rollout, final_r): #Still need to understan
     gae_returns = torch.zeros_like(r_rollout)
     gae = 0
     for t in reversed(range(len(r_rollout))):
-        if t == len(r_rollout) - 1:
-            v_tp1 = final_r
-        else:
-            v_tp1 = ppo_model(s_rollout[t+1])[0].squeeze(-1)
+        if t == len(r_rollout) - 1: v_tp1 = final_r
+        else: v_tp1 = ppo_model(s_rollout[t+1])[0].squeeze(-1)
+
         v_t = ppo_model(s_rollout[t])[0].squeeze(-1)
         y = r_rollout[t] + v_tp1 * gamma * (1 - d_rollout[t])
         td = y - v_t
@@ -108,13 +107,13 @@ def calc_gae(r_rollout, s_rollout, d_rollout, final_r): #Still need to understan
 avg_r = deque(maxlen=50)
 count = 0
 clip_range = 0.2
-batch_size = 32
+batch_size = 1
 
 for i in range(50000):
 
     r_trajectory = 0
 
-    while buffer.qty <= 32:
+    while buffer.qty <= 2048:
         a_pi = ppo_model(torch.from_numpy(s_t).float())[1]
 
         #a_t = int(torch.multinomial(a_pi, 1).detach())
@@ -164,7 +163,7 @@ for i in range(50000):
 
         #if len(adv) > 1: adv = (adv - adv.mean())/(adv.std() + 1e-8) #ppo minibatch advantage normalisations
 
-        ratio = torch.exp(log_probs - old_probs[i])   #ppo policy loss function
+        ratio = torch.exp(log_probs - old_probs[iter:iter_end])   #ppo policy loss function
         clipped_ratio = torch.clamp(ratio, 1-clip_range, 1+clip_range)
         actor_loss = -(torch.min(ratio * adv, clipped_ratio * adv)).mean()
 

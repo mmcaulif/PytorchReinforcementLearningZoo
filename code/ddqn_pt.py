@@ -114,6 +114,7 @@ def main():
         a_t = dqn_agent.select_action(s_t)
         s_tp1, r_t, done, info = env.step(a_t)
         replay_buffer.append([s_t, a_t, r_t, s_tp1, done])
+        s_t = s_tp1
 
         if len(replay_buffer) >= dqn_agent.batch_size and i >= dqn_agent.train_after:
             
@@ -131,9 +132,9 @@ def main():
         if done:
             episodes += 1
             episodic_rewards.append(int(info["episode"]["r"]))
-            s_tp1 = env.reset()
+            s_t = env.reset()
 
-        s_t = s_tp1
+        
 
     # Render Trained agent
     s_t = env.reset()
@@ -141,11 +142,12 @@ def main():
         env.render()
         a_t = dqn_agent.select_action(s_t)
         s_tp1, r_t, done, info = env.step(a_t)
+        s_t = s_tp1 
         if done:
             print(f'Episode Complete, reward = {info["episode"]["r"]}')
-            s_tp1 = env.reset()
+            s_t = env.reset()
 
-        s_t = s_tp1    
+           
 
 if __name__ == "__main__":
     # stuff only to run when not called via 'import' here
