@@ -10,7 +10,6 @@ from utils.models import PPO_model
 from utils.memory import Rollout_Memory
 
 #https://github.com/nikhilbarhate99/PPO-PyTorch/blob/master/PPO.py  shows off the ratios well
-
 class PPO:
     def __init__(
         self,
@@ -56,29 +55,30 @@ class PPO:
 
     def update(self, data, r_traj):
         s_r, a_r, r_r, pi_r, d_r, len = data
+        
         Q_rollout = self.calc_gae(s_r, r_r, d_r, r_traj).detach()
 
         V_rollout = self.network(s_r.float())[0]
 
         old_probs = Categorical(pi_r).log_prob(a_r).detach()
 
-        for iter in range(len):  
+        for iter in range(0, len, self.batch_size):  
+            iter_end = iter + self.batch_size
+
             #new outputs
-            new_v, new_pi = self.network(s_r[iter])
+            new_v, new_pi = self.network(s_r[iter:iter_end])
 
             #critic
-            critic_loss = F.mse_loss(Q_rollout[iter], new_v.squeeze(-1))
+            critic_loss = F.mse_loss(Q_rollout[iter:iter_end], new_v.squeeze(-1))
 
             #actor
             new_dist = Categorical(new_pi)
-            log_probs = new_dist.log_prob(a_r[iter])
+            log_probs = new_dist.log_prob(a_r[iter:iter_end])
             entropy = new_dist.entropy().mean()   #ppo entropy loss
             
-            adv = Q_rollout[iter] - V_rollout[iter].detach()
+            adv = Q_rollout[iter:iter_end] - V_rollout[iter:iter_end].detach()
 
-            #if len(adv) > 1: adv = (adv - adv.mean())/(adv.std() + 1e-8) #ppo minibatch advantage normalisations
-
-            ratio = torch.exp(log_probs - old_probs[iter])   #ppo policy loss function
+            ratio = torch.exp(log_probs - old_probs[iter:iter_end])   #ppo policy loss function
             clipped_ratio = torch.clamp(ratio, 1-self.clip_range, 1+self.clip_range)
             actor_loss = -(torch.min(ratio * adv, clipped_ratio * adv)).mean()
 
@@ -89,7 +89,7 @@ class PPO:
             torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.max_grad_norm) #ppo gradient clipping
             self.optimizer.step()
 
-            return loss
+        return loss
         
     def select_action(self, s):
         a_policy = self.network(torch.from_numpy(s).float())[1]
@@ -98,34 +98,39 @@ class PPO:
 
 def main():
     env_name = "CartPole-v1"
+    #env_name = "LunarLander-v2"
+    num_envs = 1
+    #env = RecordEpisodeStatistics(gym.vector.make(env_name, num_envs=num_envs))
     env = RecordEpisodeStatistics(gym.make(env_name))
+    obs_dim = 4
+    act_dim = 2
     avg_r = deque(maxlen=50)
-    episodes = 0
 
     buffer = Rollout_Memory()
-    net = PPO_model(4, 2)
-    ppo_agent = PPO(net)
+    ppo_agent = PPO(PPO_model(obs_dim, act_dim), 0.98, 0.8, 0.0, 1024, 4)
 
     s_t = env.reset()
-    for i in range(50000):
+    for i in range(1, 5000):
         r_trajectory = 0
-        while buffer.qty <= ppo_agent.n_steps:
+        while buffer.qty < ppo_agent.n_steps:
             a_t, a_pi = ppo_agent.select_action(s_t)
             s_tp1, r, d, info = env.step(a_t)
+            #[buffer.push(s_t[i], a_t[i], r[i], a_pi[i], d[i]) for i in range(num_envs)]
             buffer.push(s_t, a_t, r, a_pi, d)
+
             s_t = s_tp1
             if d:
                 s_t = env.reset()
-                episodes += 1
                 avg_r.append(int(info["episode"]["r"]))
-                if episodes % ppo_agent.verbose == 0:
-                    print(f'Episode: {episodes} | Average reward: {sum(avg_r)/len(avg_r)} | [{len(avg_r)}]')
+                if i % ppo_agent.verbose == 0:
+                    print(f'Episode: {i} | Average reward: {sum(avg_r)/len(avg_r)} | [{len(avg_r)}]')
                 break
 
         if not d:
             r_trajectory = ppo_agent.network(torch.from_numpy(s_tp1).float())[0]
         
         data = buffer.pop_all()
+        #print(data[:-1], r_trajectory, '\n')
         ppo_agent.update(data, r_trajectory)
 
 if __name__ == "__main__":
