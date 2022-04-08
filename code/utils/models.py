@@ -16,20 +16,6 @@ class td3_Actor(nn.Module):
 		a = torch.tanh(self.l3(a))
 		return torch.mul(a, self.max_action)
 
-class Critic(nn.Module):
-	def __init__(self, state_dim, action_dim):
-		super(Critic, self).__init__()
-		self.l1 = nn.Linear(state_dim + action_dim, 256)
-		self.l2 = nn.Linear(256, 256)
-		self.l3 = nn.Linear(256, 1)
-
-	def forward(self, state, action):
-		sa = torch.cat([state, action], 1)
-		q = F.relu(self.l1(sa))
-		q = F.relu(self.l2(q))
-		q = self.l3(q)
-		return q
-
 class td3_Critic(nn.Module):
 	def __init__(self, state_dim, action_dim):
 		super(td3_Critic, self).__init__()
@@ -69,6 +55,27 @@ class td3_Critic(nn.Module):
 		q1 = F.relu(self.l2(q1))
 		q1 = self.l3(q1)
 		return q1
+
+class ddpg_Critic(nn.Module):
+	def __init__(self, state_dim, action_dim):
+		super(ddpg_Critic, self).__init__()
+
+		self.critic = torch.nn.Sequential(
+            nn.Linear(state_dim + action_dim, 256),
+			nn.ReLU(),
+            nn.Linear(256, 256),
+			nn.ReLU(),
+			nn.Linear(256, 1)
+        )
+
+	def forward(self, state, action):
+		try:
+			sa = torch.cat([state, action], 1)
+		except:	
+			sa = torch.cat([state, action], -1)
+
+		q = self.critic(sa)
+		return q
 
 class Q_val(nn.Module):
 	def __init__(self, state_dim, action_dim):
