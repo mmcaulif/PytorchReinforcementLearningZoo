@@ -9,34 +9,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
 import numpy as np
-from gym import Wrapper
 import wandb
-
 from ddqn_pt import DDQN
 from utils.models import Q_val
-
-class GaussianNoise(Wrapper):
-    def __init__(self, env, p=0.1, var=0.5):
-        super().__init__(env)
-        self.env = env
-        self.p = p
-        self.var = var
-        self.obs_low = env.observation_space.low[0]
-        self.obs_high = env.observation_space.high[0]
-
-    def step(self, action):  
-        next_state, reward, done_bool, _ = super().step(action)
-        t_labels = np.zeros(2)
-        noise = torch.normal(mean=torch.zeros_like(torch.from_numpy(next_state)), std=self.var).numpy()
-        
-        I = 0
-        if torch.rand(1) < self.p: I = 1
-        t_labels[I] = 1
-        gaussian_state = np.clip((next_state + noise), self.obs_low, self.obs_high)
-        next_state = I * gaussian_state + (1 - I) * next_state
-
-        return next_state, reward, done_bool, t_labels
-
+from utils.attacker import Attacker
 class Q_ciq(nn.Module):
     def __init__(self, step=4, num_treatment=2, act_dims=2, obs_dims=4):
         super(Q_ciq, self).__init__()
@@ -166,7 +142,7 @@ def main():
     }
 
     env = gym.make(env_name)
-    env = GaussianNoise(env, p=P) #at p = 0.1, learning is already stunted for vanilla dqn
+    env = Attacker(env, p=P) #at p = 0.1, learning is already stunted for vanilla dqn
 
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.n    #shape[0]

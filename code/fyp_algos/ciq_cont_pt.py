@@ -9,10 +9,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
 import numpy as np
-from gym import Wrapper
 import wandb
-from ciq_pt import GaussianNoise, Transition
+from ciq_pt import Transition
 from utils.models import td3_Actor
+from utils.attacker import Attacker
 
 class ciq_Critic(nn.Module):
     def __init__(self, step, num_treatment, obs_dims, act_dims):
@@ -65,8 +65,6 @@ class ciq_Critic(nn.Module):
             q1 = self.fc1(torch.cat([z, t_labels], dim=-1))
 
         return q1, t_p
-
-
 class CIQ_cont():
     def __init__(self, 
         environment, 
@@ -175,7 +173,7 @@ class CIQ_cont():
 def main():
     P = 0.0
     env = gym.make('LunarLanderContinuous-v2')
-    env = GaussianNoise(env, p=P) #at p >= 0.1, learning is already stunted for vanilla dqn
+    env = Attacker(env, p=P) #at p >= 0.1, learning is already stunted for vanilla dqn
     
     ciq_agent = CIQ_cont(environment=env,    #taken from sb3 zoo
         actor=td3_Actor(env.observation_space.shape[0], env.action_space.shape[0], env.action_space.high[0]),
