@@ -34,7 +34,7 @@ class Attacker(Wrapper):
             next_state = np.zeros(self.obs_dims)
             self.next_state = next_state
 
-        elif 2*(self.p/3) < rnd < self.p:
+        elif 2*(self.p/3) < rnd < self.p:   #lag
             I = 3
             next_state = self.prev_state
 

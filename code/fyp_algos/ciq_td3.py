@@ -7,7 +7,7 @@ import numpy as np
 import gym
 import copy
 from gym.wrappers import RecordEpisodeStatistics
-from utils.models import td3_Actor, ddpg_Critic
+from code.utils.models import td3_Actor, ddpg_Critic
 
 from collections import deque
 from typing import NamedTuple
@@ -19,7 +19,7 @@ class Transition(NamedTuple):
     s_p: list  # next state
     d: int  # done
 
-class DDPG():
+class CIQ_TD3():
     def __init__(self, 
         environment, 
         actor,
@@ -129,7 +129,7 @@ class encoder_Critic(nn.Module):
         super(encoder_Critic, self).__init__()
 
         enc_dim = 64
-        num_treatment = 2
+        num_treatment = 4
 
         self.critic = nn.Sequential(
             nn.Linear(enc_dim + action_dim, 256),
@@ -177,10 +177,10 @@ def main():
     episodic_rewards = deque(maxlen=10)
     episodes = 0
 
-    ddpg_agent = DDPG(environment=env,    #taken from sb3 zoo
+    ddpg_agent = CIQ_TD3(environment=env,    #taken from sb3 zoo
         actor=td3_Actor,
         critic=encoder_Critic, 
-        pi_lr=0.000075, #lower LR prevents for the agent from spectacularly forget
+        pi_lr=0.000075, #lower LR prevents the agent from spectacularly forget
         c_lr=0.00075,
         buffer_size=200000, 
         gamma=0.98, 
@@ -204,11 +204,9 @@ def main():
             batch = Transition(*zip(*random.sample(replay_buffer, k=100)))
             loss = ddpg_agent.update(batch, i)
 
-            if i % 500 == 0: 
-                c_losses.append(loss)
-                avg_c_losses = sum(c_losses)/100    #for formatting, I want to round it better than just making it an int!
+            if i % 500 == 0:     #for formatting, I want to round it better than just making it an int!
                 avg_r = sum(episodic_rewards)/10
-                print(f"Episodes: {episodes} | Timestep: {i} | Avg. Critic Loss: {int(avg_c_losses)} | Avg. Reward: {avg_r}, [{len(episodic_rewards)}]")
+                print(f"Episodes: {episodes} | Timestep: {i} | Avg. Reward: {avg_r}, [{len(episodic_rewards)}]")
 
         if done:
             episodes += 1

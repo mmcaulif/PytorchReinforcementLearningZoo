@@ -7,27 +7,12 @@ import numpy as np
 import gym
 import copy
 from gym.wrappers import RecordEpisodeStatistics
-
-from utils.models import td3_Actor, td3_Critic
-#try:
-#    from utils.models import td3_Actor, td3_Critic
-#except:
-#    from PytorchContinousRL.code.utils.models import td3_Actor, td3_Critic
-
-#from utils.memory import Memory
-
-"""
-implementations for help:
-https://github.com/sfujim/TD3/blob/master/TD3.py
-https://colab.research.google.com/drive/19-z6Go3RydP9_uhICh0iHFgOXyKXgX7f#scrollTo=zuw702kdRr4E
-
-To do:
--add LR schedule
-"""
-
+from torch.nn.utils import clip_grad_norm_
 from collections import deque
 from typing import NamedTuple
 import random
+
+from code.utils.models import td3_Actor, td3_Critic
 class Transition(NamedTuple):
     s: list  # state
     a: float  # action
@@ -109,6 +94,7 @@ class TD3():
 
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
+        clip_grad_norm_(self.critic.parameters(), 0.5)
         self.critic_optimizer.step()
 
         #delayed Actor update
@@ -116,6 +102,7 @@ class TD3():
             policy_loss = -self.critic.q1_forward(s, self.actor(s)).mean()
             self.actor_optimizer.zero_grad()
             policy_loss.backward()
+            clip_grad_norm_(self.actor.parameters(), 0.5)
             self.actor_optimizer.step()
 
             for target_param, param in zip(self.critic_target.parameters(), self.critic.parameters()):
@@ -143,8 +130,9 @@ class TD3():
 
 def main():
     #env_name = 'MountainCarContinuous-v0'
-    env_name = 'LunarLanderContinuous-v2'
+    #env_name = 'LunarLanderContinuous-v2'
     #env_name = 'Pendulum-v1'
+    env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
     env = gym.make(env_name)
     env = RecordEpisodeStatistics(env)
 
@@ -156,8 +144,7 @@ def main():
         actor=td3_Actor,
         critic=td3_Critic, 
         buffer_size=200000, 
-        gamma=0.98, 
-        train_after=10000,
+        gamma=0.99,
         target_policy_noise=0.1,
         EPS_END=0.1)
 
@@ -166,7 +153,7 @@ def main():
     s_t = env.reset()
 
     for i in range(300000):
-        a_t = td3_agent.actor(torch.from_numpy(s_t)).detach()
+        a_t = td3_agent.actor(torch.from_numpy(s_t).float()).detach()
         a_t = td3_agent.noisy_action(a_t)
         
         s_tp1, r_t, done, info = env.step(a_t)

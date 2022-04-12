@@ -4,6 +4,7 @@ import random
 from turtle import done
 from typing import NamedTuple
 import gym
+from gym.wrappers import FrameStack
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -39,8 +40,13 @@ class Q_ciq(nn.Module):
                                 )
 
     def forward(self, s, t_labels):
-        z = self.encoder(s)  #comes out as a flattened tensor of length 128 (step * 32)
-        t_p = self.logits_t(z)  #outputs as a step * num treatments tensor
+        z = self.encoder(s)
+        t_values = self.logits_t(z)
+        #print(t_values.size())
+        idx = torch.argmax(t_values, dim=-1).long().unsqueeze(-1)
+        #print(idx.size())
+        t_p = torch.zeros_like(t_values).scatter(-1, idx, 1)
+        #print(t_values, torch.argmax(t_values))
         
         if self.training:
             q = self.fc(torch.cat([z, t_labels], dim=-1))
@@ -53,7 +59,7 @@ class CIQ():
     def __init__(
         self,
         environment,
-        network,
+        q_func,
         gamma=0.99,
         train_after=50000,
         train_freq=4,
@@ -65,7 +71,7 @@ class CIQ():
         tau=5e-3
     ):
         self.environment = environment
-        self.q_func = network
+        self.q_func = q_func
         self.q_target = copy.deepcopy(self.q_func)
         self.gamma = gamma
         self.train_after = train_after
@@ -127,6 +133,13 @@ class CIQ():
 
         return a
 
+    def causal_action(self, s):
+        self.q_func.eval()
+        with torch.no_grad():
+            q = self.q_func(torch.from_numpy(s).type(torch.float32), torch.Tensor([1,0,0,0]))[0]
+        a = torch.argmax(q).numpy()
+        return a
+
 class Transition(NamedTuple):
     s: list
     a: float
@@ -139,7 +152,7 @@ def main():
     #wandb.init(project="fyp-ciq", entity="manusft")
     P = 0.3
     vanilla = False
-    env_name = 'CartPole-v0'
+    env_name = 'CartPole-v1'
 
     """wandb.config = {
         "env_name": env_name,
@@ -149,26 +162,25 @@ def main():
 
     env = gym.make(env_name)
     env = Attacker(env, p=P)
-
-    obs_dim = env.observation_space.shape[0]
-    act_dim = env.action_space.n    #shape[0]
+    stacks = 2
+    env = FrameStack(env, stacks)
     
     if vanilla:
         print("Using vanilla ddqn")
         ciq_agent = DDQN(env, 
-            Q_val(obs_dim, act_dim), 
+            Q_val(state_dim=4*stacks, action_dim=2), 
             train_after=1000, 
             target_update=10, 
-            batch_size=64, 
+            batch_size=32, 
             learning_rate=5e-4) #fails for 1e-4, suceeds with >3e-4
     else:
         print("Using ciq-ddqn") ###!!! (bs=128, lr=5e-4) hyperparams get to 200 ~20,000 steps with P=0.05
         ciq_agent = CIQ(env, 
-            Q_ciq(), 
+            q_func=Q_ciq(obs_dims=4*stacks), 
             train_after=1000, 
             target_update=10, 
-            batch_size=256, 
-            learning_rate=5e-4) #zoo uses 2.3e-3, suceeds for 1e-3, 5e-4
+            batch_size=128, 
+            learning_rate=5e-4) #zoo uses 2.3e-3, ciq paper uses 1e-3, 5e-4 is consistent
 
     replay_buffer = deque(maxlen=100000)
 
@@ -176,11 +188,12 @@ def main():
     r_sum = 0
     episodes = 0
     s_t = env.reset()
+    s_t = np.concatenate([s_t[0], s_t[1]])
 
-    for i in range(40000+1):
-        #a_t = env.action_space.sample()
+    for i in range(30000+1):
         a_t = ciq_agent.select_action(s_t)
         s_tp1, r_t, done, i_t = env.step(a_t)
+        s_tp1 = np.concatenate([s_tp1[0], s_tp1[1]])
         r_sum += r_t
         replay_buffer.append([s_t, a_t, r_t, s_tp1, done, i_t])
 
@@ -203,12 +216,43 @@ def main():
             episodic_rewards.append(r_sum)
             r_sum = 0
             s_tp1 = env.reset()
+            s_tp1 = np.concatenate([s_tp1[0], s_tp1[1]])
 
         s_t = s_tp1
     
         #if i % 1000 == 0 and i > 0:
             #wandb.log({f"Average episodic reward, P={P}":torch.Tensor(episodic_rewards).mean()})
             #wandb.log({"dqn long train":torch.Tensor(episodic_rewards).mean()})
+
+
+    """
+    Evaluate model with training mode off thus using oracle network
+    """
+    #ciq_agent.q_func.eval()
+    for i in range(100):
+        r_sum = 0
+        done = False
+
+        s_t = env.reset()
+        s_t = np.concatenate([s_t[0], s_t[1]])
+
+        while not done:
+            try:
+                a_t = ciq_agent.causal_action(s_t)
+            except:
+                a_t = ciq_agent.select_action(s_t)
+
+            env.render()
+            s_tp1, r_t, done, i_t = env.step(a_t)
+            s_tp1 = np.concatenate([s_tp1[0], s_tp1[1]])
+            #i_estimate = ciq_agent.q_func(torch.from_numpy(s_tp1).float(), torch.from_numpy(i_t).float())[1]
+            #print(i_estimate, i_t)
+            s_t = s_tp1
+            r_sum += r_t
+
+        print(f'Episode: {i}, Total return: {r_sum}')
+        r_sum = 0
+
 
 if __name__ == "__main__":
    # stuff only to run when not called via 'import' here
