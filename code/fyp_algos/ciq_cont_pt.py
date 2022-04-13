@@ -9,118 +9,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
 import numpy as np
-from gym import Wrapper
 import wandb
-
-from ciq_pt import GaussianNoise, Transition
-
-from utils.models import td3_Actor, td3_Critic
-from td3_pt import TD3
-
-class ciq_Critic1(nn.Module):
-    def __init__(self, step, num_treatment, obs_dims, act_dims):
-        super(ciq_Critic1, self).__init__()
-        
-        self.encoder = nn.Sequential(nn.Linear(obs_dims+act_dims, 64),
-                                     nn.ReLU(),
-                                     nn.Linear(64, 64),
-                                     #nn.ReLU(),
-                                     #nn.Linear(64, 64)
-                                     )
-
-        self.logits_t = nn.Sequential(nn.Linear(64, 64),
-                                      nn.ReLU(),
-                                      nn.Linear(64, num_treatment)
-                                      )
-        
-        self.fc1 = nn.Sequential(nn.Linear((64 + num_treatment) * step , (256 + num_treatment) * step),
-                                nn.ReLU(),
-                                nn.Linear((256 + num_treatment) * step , (256 + num_treatment) * step),
-                                nn.ReLU(),
-                                nn.Linear((256 + num_treatment) * step, act_dims)
-                                )
-        
-        self.fc2 = nn.Sequential(nn.Linear((64 + num_treatment) * step , (256 + num_treatment) * step),
-                                nn.ReLU(),
-                                nn.Linear((256 + num_treatment) * step , (256 + num_treatment) * step),
-                                nn.ReLU(),
-                                nn.Linear((256 + num_treatment) * step, act_dims)
-                                )
-
-    def forward(self, s, a, t_labels):
-        sa = torch.cat([s, a], 1)
-        z = self.encoder(sa)
-        t_p = self.logits_t(z)
-        
-        if self.training:
-            q1 = self.fc1(torch.cat([z, t_labels], dim=-1))
-            q2 = self.fc2(torch.cat([z, t_labels], dim=-1))
-        else:
-            q1 = self.fc1(torch.cat([z, t_labels], dim=-1))
-            q2 = self.fc2(torch.cat([z, t_labels], dim=-1))
-
-        return [q1,q2], t_p
-
-    def q1_forward(self, s, a, t_labels):
-        sa = torch.cat([s, a], 1)
-        z = self.encoder(sa)
-        t_p = self.logits_t(z)
-        
-        if self.training:
-            q1 = self.fc1(torch.cat([z, t_labels], dim=-1))
-        else:
-            q1 = self.fc1(torch.cat([z, t_labels], dim=-1))
-
-        return q1, t_p
-
-class ciq_Critic2(nn.Module):
-    def __init__(self, step, num_treatment, obs_dims, act_dims):
-        super(ciq_Critic2, self).__init__()
-
-        self.logits_t = nn.Sequential(nn.Linear(obs_dims+act_dims, 64),
-                                      nn.ReLU(),
-                                      nn.Linear(64,64),
-                                      nn.ReLU(),
-                                      nn.Linear(64, num_treatment)
-                                      )
-        
-        self.fc1 = nn.Sequential(nn.Linear((obs_dims + act_dims + num_treatment) * step , (256 + num_treatment) * step),
-                                nn.ReLU(),
-                                nn.Linear((256 + num_treatment) * step , (256 + num_treatment) * step),
-                                nn.ReLU(),
-                                nn.Linear((256 + num_treatment) * step, 1)
-                                )
-        
-        self.fc2 = nn.Sequential(nn.Linear((obs_dims + act_dims + num_treatment) * step , (256 + num_treatment) * step),
-                                nn.ReLU(),
-                                nn.Linear((256 + num_treatment) * step , (256 + num_treatment) * step),
-                                nn.ReLU(),
-                                nn.Linear((256 + num_treatment) * step, 1)
-                                )
-
-    def forward(self, s, a, t_labels):
-        sa = torch.cat([s, a], 1)
-        t_p = self.logits_t(sa)
-        
-        if self.training:
-            q1 = self.fc1(torch.cat([sa, t_labels], dim=-1))
-            q2 = self.fc2(torch.cat([sa, t_labels], dim=-1))
-        else:
-            q1 = self.fc1(torch.cat([sa, t_labels], dim=-1))
-            q2 = self.fc2(torch.cat([sa, t_labels], dim=-1))
-
-        return [q1, q2], t_p
-
-    def q1_forward(self, s, a, t_labels):
-        sa = torch.cat([s, a], 1)
-        t_p = self.logits_t(sa)
-        
-        if self.training:
-            q1 = self.fc1(torch.cat([sa, t_labels], dim=-1))
-        else:
-            q1 = self.fc1(torch.cat([sa, t_labels], dim=-1))
-
-        return q1, t_p
+from ciq_pt import Transition
+from utils.models import td3_Actor
+from utils.attacker import Attacker
+class ciq_Critic(nn.Module):
 
 class CIQ_cont():
     def __init__(self, 
@@ -230,14 +123,8 @@ class CIQ_cont():
 def main():
     
     P = 0.0
-    vanilla = True
-    env_name = 'LunarLanderContinuous-v2'
-    """wandb.init(project="fyp-ciq", entity="manusft")
-    wandb.config = {
-        "env_name": env_name,
-        "P": P,
-        "Vanilla q network": vanilla
-    }"""
+    env = gym.make('LunarLanderContinuous-v2')
+    env = Attacker(env, p=P) #at p >= 0.1, learning is already stunted for vanilla dqn
     
     env = gym.make(env_name)
     env = GaussianNoise(env, p=P, var=0.0) #at p >= 0.1, learning is already stunted for vanilla dqn

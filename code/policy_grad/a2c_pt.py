@@ -17,14 +17,12 @@ class Model(torch.nn.Module):
         super(Model, self).__init__()
         
         self.critic = torch.nn.Sequential(
-            nn.Linear(input_size, 64),
-            nn.Linear(64, 64),
-            nn.Linear(64, 1)
+            nn.Linear(input_size, 256),
+            nn.Linear(256, 1)
         )
         self.actor = torch.nn.Sequential(
-            nn.Linear(input_size, 64),
-            nn.Linear(64, 64),
-            nn.Linear(64, action_size),
+            nn.Linear(input_size, 256),
+            nn.Linear(256, action_size),
             nn.Softmax(dim=-1)
         )
 
@@ -36,12 +34,14 @@ class Model(torch.nn.Module):
 class Memory(object):
     def __init__(self):
         self.states, self.actions, self.rewards, self.policies = [], [], [], []
+        self.qty = 0
     
     def push(self, state, action, reward, policy):
         self.states.append(state)
         self.actions.append(action)
         self.rewards.append(reward)
         self.policies.append(policy)
+        self.qty += 1
     
     def pop_all(self):
         states = torch.as_tensor(np.array(self.states))
@@ -50,6 +50,7 @@ class Memory(object):
         policies = torch.stack(self.policies).float()
         
         self.states, self.actions, self.rewards, self.policies = [], [], [], []
+        self.qty = 0
         
         return states, actions, rewards.squeeze(-1), policies
 
@@ -59,32 +60,17 @@ def select_action(x):
     x_dist = Categorical(x)
     return x_t, x_dist.log_prob(torch.tensor(x_t)), x_dist.entropy().mean()
 
-"""def rollout(s_t, n_steps, buffer):
-    final_r = 0
-
-    for i in range(n_steps):
-        a_pi = a2c_model(torch.from_numpy(s_t).float())[1]
-        a_t = int(torch.multinomial(a_pi, 1).detach())
-        s_tp1, r, d, info = env.step(a_t)
-        buffer.push(s_t, a_t, r, a_pi)
-        s_t = s_tp1
-        if d:
-            s_t = env.reset()
-            print(f'Episode reward: {int(info["episode"]["r"])}')
-            break
-
-    if not d:
-        final_r, _ = a2c_model(torch.from_numpy(s_tp1).float())  
-
-    return s_t, buffer, final_r"""
-
-env = RecordEpisodeStatistics(gym.make("CartPole-v1"))
+env_name = "CartPole-v1"
+#env_name = "LunarLander-v2"
+env = RecordEpisodeStatistics(gym.make(env_name))
 s_t = env.reset()
 
-a2c_model = Model(4, 2)
-optimizer = torch.optim.Adam(a2c_model.parameters(), lr=0.0007, eps=1e-5)
-lambda1 = lambda epoch: 0.0003 * (10000 - epoch)/10000
-#scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,lr_lambda=lambda1)
+obs_dim = env.observation_space.shape[0]
+act_dim = env.action_space.n
+
+a2c_model = Model(obs_dim, act_dim)
+optimizer = torch.optim.Adam(a2c_model.parameters(), lr=0.0007, eps=1e-5)   #ppo optimiser
+
 buffer = Memory()
 
 def calc_returns(r_rollout, final_r):
@@ -94,16 +80,14 @@ def calc_returns(r_rollout, final_r):
         discounted_r[t] = final_r
     return discounted_r
 
-avg_r = deque(maxlen=50)
+avg_r = deque(maxlen=200)
 count = 0
 
 for i in range(50000):
-    
-    #s_t, buffer, r_trajectory = rollout(s_t, n_steps=5, buffer=buffer)
 
     r_trajectory = 0
 
-    for i in range(5):
+    while buffer.qty <= 5:
         a_pi = a2c_model(torch.from_numpy(s_t).float())[1]
         a_t = int(torch.multinomial(a_pi, 1).detach())
         s_tp1, r, d, info = env.step(a_t)
@@ -113,8 +97,8 @@ for i in range(50000):
             s_t = env.reset()
             count += 1
             avg_r.append(int(info["episode"]["r"]))
-            if count % 5 == 0:
-                print(f'Episode: {count}| Average reward: {sum(avg_r)/len(avg_r)} | [{len(avg_r)}]')
+            if count % 20 == 0:
+                print(f'Episode: {count} | Average reward: {sum(avg_r)/len(avg_r)} | Rollouts: {i} | [{len(avg_r)}]')
             break
 
     if not d:
@@ -130,17 +114,16 @@ for i in range(50000):
     
     dist_rollout = Categorical(pi_rollout)   
 
-    entropy = dist_rollout.entropy().mean()
+    entropy = dist_rollout.entropy().mean() #ppo entropy loss
     adv = Q - V.detach()
+
     log_probs = dist_rollout.log_prob(a_rollout)
     actor_loss = -(log_probs * adv.detach()).mean()
-
-    #print(actor_loss, critic_loss, entropy, '\n')
     loss = actor_loss + (critic_loss * 0.5) - (entropy * 0.01)
 
     optimizer.zero_grad()
     loss.backward()
-    torch.nn.utils.clip_grad_norm_(a2c_model.parameters(), 0.5)
+    torch.nn.utils.clip_grad_norm_(a2c_model.parameters(), 0.5) #ppo gradient clipping
     optimizer.step()
 
     

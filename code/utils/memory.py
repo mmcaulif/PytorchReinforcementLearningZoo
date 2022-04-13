@@ -1,34 +1,28 @@
-import random
-from collections import deque
+import torch
 import numpy as np
 
-class Memory:
-    def __init__(self, max_size):
-        self.max_size = max_size
-        self.buffer = deque(maxlen=max_size)
+class Rollout_Memory(object):
+    def __init__(self):
+        self.states, self.actions, self.rewards, self.policies, self.dones = [], [], [], [], []
+        self.qty = 0
     
-    def push(self, state, action, reward, next_state, done):
-        experience = (state, action, np.array([reward]), next_state, done)
-        self.buffer.append(experience)
-
-    def sample(self, batch_size):
-        state_batch = []
-        action_batch = []
-        reward_batch = []
-        next_state_batch = []
-        done_batch = []
-
-        batch = random.sample(self.buffer, batch_size)
-
-        for experience in batch:
-            state, action, reward, next_state, done = experience
-            state_batch.append(state)
-            action_batch.append(action)
-            reward_batch.append(reward)
-            next_state_batch.append(next_state)
-            done_batch.append(done)
+    def push(self, state, action, reward, policy, done):
+        self.states.append(state)
+        self.actions.append(action)
+        self.rewards.append(reward)
+        self.policies.append(policy)
+        self.dones.append(done)
+        self.qty += 1
+    
+    def pop_all(self):
+        states = torch.as_tensor(np.array(self.states))
+        actions = torch.LongTensor(self.actions)
+        rewards = torch.FloatTensor(self.rewards)
+        policies = torch.stack(self.policies).float()
+        dones = torch.IntTensor(self.dones)
+        qty = self.qty
         
-        return state_batch, action_batch, reward_batch, next_state_batch, done_batch
-
-    def __len__(self):
-        return len(self.buffer)
+        self.states, self.actions, self.rewards, self.policies, self.dones = [], [], [], [], []
+        self.qty = 0
+        
+        return states, actions, rewards, policies, dones, qty
