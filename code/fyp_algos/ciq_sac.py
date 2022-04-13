@@ -15,19 +15,19 @@ from code.utils.attacker import Attacker
 from code.fyp_algos.ciq_pt import Transition
 
 class encoder_Critic(nn.Module):
-    def __init__(self, stacks, num_treatment, obs_dims, act_dims):
+    def __init__(self, stacks, num_treatment, obs_dims, act_dims, enc_dim):
         super(encoder_Critic, self).__init__()
-        enc_dim = 64
+        self.enc_dim = enc_dim
 
         self.encoder = nn.Sequential(nn.Linear(obs_dims*stacks, enc_dim),
                                      nn.ReLU(),
-                                     nn.Linear(enc_dim, enc_dim),
-                                     nn.ReLU(),
+                                     #nn.Linear(enc_dim, enc_dim),
+                                     #nn.ReLU(),
                                      )
 
-        self.logits_t = nn.Sequential(nn.Linear(64, 64//2),
+        self.logits_t = nn.Sequential(nn.Linear(enc_dim, enc_dim//2),
                                       nn.ReLU(),
-                                      nn.Linear(64//2, num_treatment)
+                                      nn.Linear(enc_dim//2, num_treatment)
                                       )
 
         self.fc = nn.Sequential(nn.Linear(enc_dim+act_dims+num_treatment, 256),
@@ -50,7 +50,7 @@ class encoder_Critic(nn.Module):
         else:
             q = self.fc(torch.cat([zsa, t_p], dim=-1))
 
-        return q, t_p
+        return q, t_labels#, t_p    #altered for debugging purposes
 class CIQ_SAC():
     def __init__(self, 
         environment, 
@@ -108,8 +108,8 @@ class CIQ_SAC():
 
         i_p = self.critic(s_p, a_p, i_t)[1]
 
-        i_loss = F.binary_cross_entropy_with_logits(i_p, i_t)
-        critic_loss = F.mse_loss(q, y) + i_loss
+        #i_loss = F.binary_cross_entropy_with_logits(i_p, i_t)
+        critic_loss = F.mse_loss(q, y)# + i_loss
 
         self.critic_optimizer.zero_grad()
         critic_loss.backward()

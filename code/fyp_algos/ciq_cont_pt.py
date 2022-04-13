@@ -13,7 +13,6 @@ import wandb
 from ciq_pt import Transition
 from utils.models import td3_Actor
 from utils.attacker import Attacker
-
 class ciq_Critic(nn.Module):
     def __init__(self, step, num_treatment, obs_dims, act_dims):
         super(ciq_Critic, self).__init__()

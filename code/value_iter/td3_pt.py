@@ -32,13 +32,10 @@ class TD3():
         gamma=0.99, 
         train_after=0,
         policy_delay=2,
+        action_noise=0.1,
         target_policy_noise=0.2, 
         target_noise_clip=0.5,
-        verbose=500,
-        EPS_END=0.05,
-        debug_dim=[],
-        debug_act_high=[],
-        debug_act_low=[]):
+        verbose=500):
 
         self.environment = environment
         self.buffer_size = buffer_size
@@ -47,6 +44,7 @@ class TD3():
         self.gamma = gamma
         self.train_after = train_after
         self.policy_delay = policy_delay
+        self.action_noise = action_noise
         self.target_policy_noise = target_policy_noise
         self.target_noise_clip = target_noise_clip
         self.verbose=verbose
@@ -62,10 +60,6 @@ class TD3():
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=lr)
 
-        self.EPS_END = EPS_END
-        self.EPS = 0.9
-        self.EPS_DECAY = 0.999
-
     def update(self, batch, i):
         s = torch.from_numpy(np.array(batch.s)).type(torch.float32)
         a = torch.from_numpy(np.array(batch.a))
@@ -76,7 +70,7 @@ class TD3():
         #Critic update
         with torch.no_grad():
             a_p = self.actor_target(s_p)
-            a_p = torch.from_numpy(self.noisy_action(a_p))
+            a_p = self.noisy_action(a_p, self.target_policy_noise)
             target_q1, target_q2 = self.critic_target(s_p, a_p)
             target_q = torch.min(target_q1, target_q2)
             y = r + self.gamma * target_q * (1 - d)
@@ -106,20 +100,18 @@ class TD3():
 
         return critic_loss    
 
-    def noisy_action(self, a_t):
+    def noisy_action(self, a_t, std_amnt):
         mean=torch.zeros_like(a_t)
-        noise = torch.normal(mean=mean, std=0.1).clamp(-self.target_noise_clip, self.target_noise_clip)
-        return (a_t + noise).clamp(self.act_low,self.act_high).numpy()
+        noise = torch.normal(mean=mean, std=std_amnt).clamp(-self.target_noise_clip, self.target_noise_clip)
+        return (a_t + noise).clamp(self.act_low,self.act_high)
 
     def select_action(self, s):
-        self.EPS = max(self.EPS_END, self.EPS * self.EPS_DECAY)
-        if torch.rand(1) > self.EPS:
-            #a = self.actor(torch.tensor(s).float()).detach()
-            a = self.actor(torch.from_numpy(s).type(torch.float32)).detach()    #might be faster?
+        a = self.actor(torch.from_numpy(s).float()).detach()
+        if self.actor.training:
+            a = self.noisy_action(a, self.action_noise)
         else:
-            a = torch.from_numpy(self.environment.action_space.sample()).type(torch.float32)
-
-        return a
+            a = self.noisy_action(a, 0)
+        return a.numpy()
 
 def main():
     #env_name = 'MountainCarContinuous-v0'
@@ -148,9 +140,8 @@ def main():
     s_t = env.reset()
 
     for i in range(300000):
-        a_t = td3_agent.actor(torch.from_numpy(s_t).float()).detach()
-        a_t = td3_agent.noisy_action(a_t)
-        
+        a_t = td3_agent.select_action(s_t)
+                
         s_tp1, r_t, done, _ = env.step(a_t)
         r_sum += r_t
         replay_buffer.append([s_t, a_t, r_t, s_tp1, done])
@@ -174,12 +165,12 @@ def main():
     """
     Render trained agent
     """
-
+    td3_agent.actor.eval()
     s_t = env.reset()
     while True:
         env.render()
-        a_t = td3_agent.actor(torch.from_numpy(s_t))
-        s_tp1, r_t, done, _ = env.step(a_t.numpy())
+        a_t = td3_agent.select_action(s_t).numpy()
+        s_tp1, r_t, done, _ = env.step(a_t)
         s_t = s_tp1
         if done:
             s_t = env.reset()        
