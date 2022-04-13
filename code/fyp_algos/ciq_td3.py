@@ -3,29 +3,25 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils import clip_grad_norm_
 import numpy as np
 import gym
 import copy
-from gym.wrappers import RecordEpisodeStatistics
-from code.utils.models import td3_Actor, ddpg_Critic
-
+from gym.wrappers import FrameStack
 from collections import deque
-from typing import NamedTuple
 import random
-class Transition(NamedTuple):
-    s: list  # state
-    a: float  # action
-    r: float  # reward
-    s_p: list  # next state
-    d: int  # done
+
+from code.utils.models import td3_Actor
+from code.fyp_algos.ciq_sac import encoder_Critic
+from code.utils.attacker import Attacker
+from code.fyp_algos.ciq_pt import Transition
 
 class CIQ_TD3():
     def __init__(self, 
         environment, 
         actor,
         critic,
-        pi_lr=1e-4, 
-        c_lr=1e-3, 
+        lr=1e-4,
         buffer_size=1000000, 
         batch_size=100, 
         tau=0.005, 
@@ -34,10 +30,7 @@ class CIQ_TD3():
         policy_delay=2,
         target_policy_noise=0.2, 
         target_noise_clip=0.5,
-        EPS_END=0.05,
-        debug_dim=[],
-        debug_act_high=[],
-        debug_act_low=[]):
+        EPS_END=0.05):
 
         self.environment = environment
         self.buffer_size = buffer_size
@@ -48,25 +41,17 @@ class CIQ_TD3():
         self.policy_delay = policy_delay
         self.target_policy_noise = target_policy_noise
         self.target_noise_clip = target_noise_clip
+  
+        self.act_high = environment.action_space.high[0]
+        self.act_low = environment.action_space.low[0]
 
-        try:
-            obs_dim = environment.observation_space.shape[0]            
-            act_dim = environment.action_space.shape[0]    
-            self.act_high = environment.action_space.high[0]
-            self.act_low = environment.action_space.low[0]    
-        except:
-            obs_dim = debug_dim[0]
-            act_dim = debug_dim[1]
-            self.act_high = torch.tensor(debug_act_high)
-            self.act_low = torch.tensor(debug_act_low)
-
-        self.actor = actor(obs_dim, act_dim, self.act_high)
+        self.actor = actor
         self.actor_target = copy.deepcopy(self.actor)
-        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=pi_lr)
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr)
 
-        self.critic = critic(obs_dim, act_dim)
+        self.critic = critic
         self.critic_target = copy.deepcopy(self.critic)
-        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=c_lr)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=lr)
 
         self.EPS_END = EPS_END
         self.EPS = 0.9
@@ -78,17 +63,23 @@ class CIQ_TD3():
         r = torch.FloatTensor(batch.r).unsqueeze(1)
         s_p = torch.from_numpy(np.array(batch.s_p)).type(torch.float32)
         d = torch.IntTensor(batch.d).unsqueeze(1)
+        i_t = torch.from_numpy(np.array(batch.t)).type(torch.float32)
 
         #Critic update
         with torch.no_grad():
             a_p = self.actor_target(s_p)
             a_p = torch.from_numpy(self.noisy_action(a_p))
-            target_q = self.critic_target(s_p, a_p)
+            target_q = self.critic_target(s_p, a_p, i_t)[0]
             y = r + self.gamma * target_q * (1 - d)
 
-        q = self.critic(s, a)
+        idx = torch.zeros(len(i_t)).unsqueeze(-1)
+        i_ghost = torch.zeros(i_t.size()).scatter(-1, idx.long(), 1)
+        q = self.critic(s, a, i_ghost)[0]
 
-        critic_loss = F.mse_loss(q, y)
+        i_p = self.critic(s_p, a_p, i_t)[1]
+
+        i_loss = F.binary_cross_entropy_with_logits(i_p, i_t)
+        critic_loss = F.mse_loss(q, y) + i_loss
 
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
@@ -96,9 +87,10 @@ class CIQ_TD3():
 
         #delayed Actor update
         if i % self.policy_delay == 0:
-            policy_loss = -self.critic.forward(s, self.actor(s)).mean()
+            policy_loss = -self.critic.forward(s, self.actor(s), i_ghost)[0].mean()
             self.actor_optimizer.zero_grad()
             policy_loss.backward()
+            clip_grad_norm_(self.actor.parameters(), 0.5)
             self.actor_optimizer.step()
 
             for target_param, param in zip(self.critic_target.parameters(), self.critic.parameters()):
@@ -117,50 +109,11 @@ class CIQ_TD3():
     def select_action(self, s):
         self.EPS = max(self.EPS_END, self.EPS * self.EPS_DECAY)
         if torch.rand(1) > self.EPS:
-            #a = self.actor(torch.tensor(s).float()).detach()
-            a = self.actor(torch.from_numpy(s).type(torch.float32)).detach()    #might be faster?
+            a = self.actor(torch.tensor(s).float()).detach()
         else:
-            a = torch.from_numpy(self.environment.action_space.sample()).type(torch.float32)
+            a = torch.from_numpy(self.environment.action_space.sample()).float()
 
         return a
-
-class encoder_Critic(nn.Module):
-    def __init__(self, state_dim, action_dim):
-        super(encoder_Critic, self).__init__()
-
-        enc_dim = 64
-        num_treatment = 4
-
-        self.critic = nn.Sequential(
-            nn.Linear(enc_dim + action_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1)
-            )
-
-        self.encoder = nn.Sequential(
-            nn.Linear(state_dim, enc_dim),
-            #nn.ReLU(),
-            #nn.Linear(enc_dim, enc_dim)
-        )
-
-        self.oracle = nn.Sequential(
-            nn.Linear(enc_dim, enc_dim//2),
-            nn.ReLU(),
-            nn.Linear(enc_dim//2, num_treatment)
-        )
-
-    def forward(self, state, action):
-        s_z = self.encoder(state)
-        try:
-            sa = torch.cat([s_z, action], 1)
-        except:	
-            sa = torch.cat([s_z, action], -1)
-
-        i_pi = self.oracle(s_z)
-        q = self.critic(sa)
-        return q#, i_pi
 
 def main():
     env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'  
@@ -171,36 +124,37 @@ def main():
     -a lot to talk about in terms of experimenting with how you transferred ciq to ddpg
     """
     env = gym.make(env_name)
-    env = RecordEpisodeStatistics(env)
+    env = Attacker(env)
+    stacks = 2
+    env = FrameStack(env, stacks)
 
-    c_losses = deque(maxlen=100)
     episodic_rewards = deque(maxlen=10)
     episodes = 0
 
     ddpg_agent = CIQ_TD3(environment=env,    #taken from sb3 zoo
-        actor=td3_Actor,
-        critic=encoder_Critic, 
-        pi_lr=0.000075, #lower LR prevents the agent from spectacularly forget
-        c_lr=0.00075,
-        buffer_size=200000, 
+        actor=td3_Actor(8, 1, env.action_space.high[0]),
+        critic=encoder_Critic(stacks, 4, 4, 1),
+        buffer_size=200000,
+        tau=0.01,
         gamma=0.98, 
-        train_after=10000,
-        target_policy_noise=0.1,
-        EPS_END=0.1)
+        train_after=1000)
 
     replay_buffer = deque(maxlen=ddpg_agent.buffer_size)
-
+    r_sum = 0
     s_t = env.reset()
+    s_t = np.concatenate([s_t[0], s_t[1]])
 
     for i in range(300000):
         a_t = ddpg_agent.actor(torch.from_numpy(s_t).float()).detach()
         a_t = ddpg_agent.noisy_action(a_t)
         
-        s_tp1, r_t, done, info = env.step(a_t)
-        
-        replay_buffer.append([s_t, a_t, r_t, s_tp1, done])
+        s_tp1, r_t, done, i_t = env.step(a_t)
+        r_sum += r_t
+        s_tp1 = np.concatenate([s_tp1[0], s_tp1[1]])
+        replay_buffer.append([s_t, a_t, r_t, s_tp1, done, i_t])
+        s_t = s_tp1
 
-        if len(replay_buffer) >= 100 and i > ddpg_agent.train_after:
+        if len(replay_buffer) >= 100 and i >= ddpg_agent.train_after:
             batch = Transition(*zip(*random.sample(replay_buffer, k=100)))
             loss = ddpg_agent.update(batch, i)
 
@@ -210,10 +164,11 @@ def main():
 
         if done:
             episodes += 1
-            episodic_rewards.append(int(info['episode']['r']))
-            s_tp1 = env.reset()
-
-        s_t = s_tp1
+            episodic_rewards.append(r_sum)
+            r_sum = 0
+            s_t = env.reset()
+            s_t = np.concatenate([s_t[0], s_t[1]])
+        
 
     #Render Trained agent
     s_t = env.reset()

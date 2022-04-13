@@ -7,7 +7,6 @@ import numpy as np
 import gym
 import copy
 from gym.wrappers import FrameStack
-from gym.wrappers import RecordEpisodeStatistics
 from collections import deque
 import random
 
@@ -15,20 +14,56 @@ from code.utils.models import ddpg_Critic, sac_Actor
 from code.utils.attacker import Attacker
 from code.fyp_algos.ciq_pt import Transition
 
+class encoder_Critic(nn.Module):
+    def __init__(self, stacks, num_treatment, obs_dims, act_dims):
+        super(encoder_Critic, self).__init__()
+        enc_dim = 64
+
+        self.encoder = nn.Sequential(nn.Linear(obs_dims*stacks, enc_dim),
+                                     nn.ReLU(),
+                                     nn.Linear(enc_dim, enc_dim),
+                                     nn.ReLU(),
+                                     )
+
+        self.logits_t = nn.Sequential(nn.Linear(64, 64//2),
+                                      nn.ReLU(),
+                                      nn.Linear(64//2, num_treatment)
+                                      )
+
+        self.fc = nn.Sequential(nn.Linear(enc_dim+act_dims+num_treatment, 256),
+                                nn.ReLU(),
+                                nn.Linear(256, 256),
+                                nn.ReLU(),
+                                nn.Linear(256, 1)
+                                )
+        
+    def forward(self, state, action, t_labels):
+        zs = self.encoder(state)
+        zsa = torch.cat([zs, action], 1)
+
+        t_values = self.logits_t(zs)
+        idx = torch.argmax(t_values, dim=-1).long().unsqueeze(-1)
+        t_p = torch.zeros_like(t_values).scatter(-1, idx, 1)
+        
+        if self.training:
+            q = self.fc(torch.cat([zsa, t_labels], dim=-1))
+        else:
+            q = self.fc(torch.cat([zsa, t_p], dim=-1))
+
+        return q, t_p
 class CIQ_SAC():
     def __init__(self, 
         environment, 
         actor,
         critic,
-        pi_lr=1e-4, 
-        c_lr=1e-3, 
+        lr=3e-4,
         buffer_size=1000000, 
-        batch_size=100, 
+        batch_size=256, 
         alpha=0.2,
         tau=0.005, 
         gamma=0.99, 
-        train_after=0,
-        policy_delay=2,
+        train_after=100,
+        policy_delay=1,
         verbose=500):
 
         self.environment = environment
@@ -42,11 +77,11 @@ class CIQ_SAC():
         self.verbose = verbose
 
         self.actor = actor
-        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=pi_lr)
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr)
 
         self.critic = critic
         self.critic_target = copy.deepcopy(self.critic)
-        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=c_lr)
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=lr)
 
         # action rescaling
         #print(self.act_high, self.act_low)
@@ -64,22 +99,26 @@ class CIQ_SAC():
         #Critic update
         with torch.no_grad():
             a_p, log_pi, _ = self.select_action(s_p)
-            target_q = self.critic_target(s_p, a_p) - log_pi * self.alpha
+            target_q = self.critic_target(s_p, a_p, i_t)[0] - (log_pi * self.alpha)
             y = r + self.gamma * target_q * (1 - d)
+        
+        idx = torch.zeros(len(i_t)).unsqueeze(-1)
+        i_ghost = torch.zeros(i_t.size()).scatter(-1, idx.long(), 1)
+        q = self.critic(s, a, i_ghost)[0]
 
-        q = self.critic(s, a)
+        i_p = self.critic(s_p, a_p, i_t)[1]
 
-        critic_loss = F.mse_loss(q, y)
+        i_loss = F.binary_cross_entropy_with_logits(i_p, i_t)
+        critic_loss = F.mse_loss(q, y) + i_loss
 
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         clip_grad_norm_(self.critic.parameters(), 0.5)
         self.critic_optimizer.step()
 
-        #delayed Actor update
         if i % self.policy_delay == 0:
             a_p, log_pi, _ = self.select_action(s)
-            policy_loss = ((self.alpha * log_pi) -self.critic.forward(s, a_p)).mean()
+            policy_loss = ((self.alpha * log_pi) - self.critic(s, a, i_ghost)[0]).mean()
 
             self.actor_optimizer.zero_grad()
             policy_loss.backward()
@@ -123,12 +162,11 @@ def main():
 
     sac_agent = CIQ_SAC(environment=env,    #taken from sb3 zoo
         actor=sac_Actor(4 * stacks, 1),
-        critic=ddpg_Critic(4 * stacks, 1),
-        pi_lr=0.0002,
-        c_lr=0.002,
+        critic=encoder_Critic(stacks, 4, 4, 1),
         buffer_size=200000,
         tau=0.01,
-        gamma=0.99)
+        gamma=0.98,
+        train_after=1000)
 
     replay_buffer = deque(maxlen=sac_agent.buffer_size)
 
@@ -144,8 +182,8 @@ def main():
         s_tp1 = np.concatenate([s_tp1[0], s_tp1[1]])
         replay_buffer.append([s_t, a_t, r_t, s_tp1, done, i_t])
 
-        if len(replay_buffer) >= 100 and i > sac_agent.train_after:
-            batch = Transition(*zip(*random.sample(replay_buffer, k=100)))
+        if len(replay_buffer) >= sac_agent.batch_size and i >= sac_agent.train_after:
+            batch = Transition(*zip(*random.sample(replay_buffer, k=sac_agent.batch_size)))
             loss = sac_agent.update(batch, i)
 
             if i % sac_agent.verbose == 0: 
