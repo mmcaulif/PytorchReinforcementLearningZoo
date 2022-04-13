@@ -1,5 +1,3 @@
-#currently reaches 200+ score on LunarLander in 322 episodes/130,000 timesteps
-#bit unstable but slowly gets there
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,27 +5,12 @@ import numpy as np
 import gym
 import copy
 from gym.wrappers import RecordEpisodeStatistics
-
-from utils.models import td3_Actor, td3_Critic
-#try:
-#    from utils.models import td3_Actor, td3_Critic
-#except:
-#    from PytorchContinousRL.code.utils.models import td3_Actor, td3_Critic
-
-#from utils.memory import Memory
-
-"""
-implementations for help:
-https://github.com/sfujim/TD3/blob/master/TD3.py
-https://colab.research.google.com/drive/19-z6Go3RydP9_uhICh0iHFgOXyKXgX7f#scrollTo=zuw702kdRr4E
-
-To do:
--add LR schedule
-"""
-
+from torch.nn.utils import clip_grad_norm_
 from collections import deque
 from typing import NamedTuple
 import random
+
+from code.utils.models import td3_Actor, td3_Critic
 class Transition(NamedTuple):
     s: list  # state
     a: float  # action
@@ -40,20 +23,17 @@ class TD3():
         environment, 
         actor,
         critic,
-        pi_lr=1e-4, 
-        c_lr=1e-3, 
+        lr=3e-4,
         buffer_size=1000000, 
         batch_size=100, 
         tau=0.005, 
         gamma=0.99, 
         train_after=0,
         policy_delay=2,
+        action_noise=0.1,
         target_policy_noise=0.2, 
         target_noise_clip=0.5,
-        EPS_END=0.05,
-        debug_dim=[],
-        debug_act_high=[],
-        debug_act_low=[]):
+        verbose=500):
 
         self.environment = environment
         self.buffer_size = buffer_size
@@ -62,31 +42,21 @@ class TD3():
         self.gamma = gamma
         self.train_after = train_after
         self.policy_delay = policy_delay
+        self.action_noise = action_noise
         self.target_policy_noise = target_policy_noise
         self.target_noise_clip = target_noise_clip
+        self.verbose=verbose
+                
+        self.act_high = environment.action_space.high[0]
+        self.act_low = environment.action_space.low[0]
 
-        try:
-            obs_dim = environment.observation_space.shape[0]            
-            act_dim = environment.action_space.shape[0]    
-            self.act_high = environment.action_space.high[0]
-            self.act_low = environment.action_space.low[0]    
-        except:
-            obs_dim = debug_dim[0]
-            act_dim = debug_dim[1]
-            self.act_high = torch.tensor(debug_act_high)
-            self.act_low = torch.tensor(debug_act_low)
-
-        self.actor = actor(obs_dim, act_dim, self.act_high)
+        self.actor = actor
         self.actor_target = copy.deepcopy(self.actor)
-        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=pi_lr)
+        self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr)
 
-        self.critic = critic(obs_dim, act_dim)
+        self.critic = critic
         self.critic_target = copy.deepcopy(self.critic)
-        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=c_lr)
-
-        self.EPS_END = EPS_END
-        self.EPS = 0.9
-        self.EPS_DECAY = 0.999
+        self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=lr)
 
     def update(self, batch, i):
         s = torch.from_numpy(np.array(batch.s)).type(torch.float32)
@@ -98,7 +68,7 @@ class TD3():
         #Critic update
         with torch.no_grad():
             a_p = self.actor_target(s_p)
-            a_p = torch.from_numpy(self.noisy_action(a_p))
+            a_p = self.noisy_action(a_p, self.target_policy_noise)
             target_q1, target_q2 = self.critic_target(s_p, a_p)
             target_q = torch.min(target_q1, target_q2)
             y = r + self.gamma * target_q * (1 - d)
@@ -109,6 +79,7 @@ class TD3():
 
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
+        clip_grad_norm_(self.critic.parameters(), 0.5)
         self.critic_optimizer.step()
 
         #delayed Actor update
@@ -116,6 +87,7 @@ class TD3():
             policy_loss = -self.critic.q1_forward(s, self.actor(s)).mean()
             self.actor_optimizer.zero_grad()
             policy_loss.backward()
+            clip_grad_norm_(self.actor.parameters(), 0.5)
             self.actor_optimizer.step()
 
             for target_param, param in zip(self.critic_target.parameters(), self.critic.parameters()):
@@ -126,80 +98,80 @@ class TD3():
 
         return critic_loss    
 
-    def noisy_action(self, a_t):
+    def noisy_action(self, a_t, std_amnt):
         mean=torch.zeros_like(a_t)
-        noise = torch.normal(mean=mean, std=0.1).clamp(-self.target_noise_clip, self.target_noise_clip)
-        return (a_t + noise).clamp(self.act_low,self.act_high).numpy()
+        noise = torch.normal(mean=mean, std=std_amnt).clamp(-self.target_noise_clip, self.target_noise_clip)
+        return (a_t + noise).clamp(self.act_low,self.act_high)
 
     def select_action(self, s):
-        self.EPS = max(self.EPS_END, self.EPS * self.EPS_DECAY)
-        if torch.rand(1) > self.EPS:
-            #a = self.actor(torch.tensor(s).float()).detach()
-            a = self.actor(torch.from_numpy(s).type(torch.float32)).detach()    #might be faster?
+        a = self.actor(torch.from_numpy(s).float()).detach()
+        if self.actor.training:
+            a = self.noisy_action(a, self.action_noise)
         else:
-            a = torch.from_numpy(self.environment.action_space.sample()).type(torch.float32)
-
-        return a
+            a = self.noisy_action(a, 0)
+        return a.numpy()
 
 def main():
     #env_name = 'MountainCarContinuous-v0'
     env_name = 'LunarLanderContinuous-v2'
     #env_name = 'Pendulum-v1'
+    #env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
     env = gym.make(env_name)
     env = RecordEpisodeStatistics(env)
+    obs_dim = env.observation_space.shape[0]            
+    act_dim = env.action_space.shape[0]
 
-    c_losses = deque(maxlen=100)
     episodic_rewards = deque(maxlen=10)
     episodes = 0
+    r_sum = 0
 
-    td3_agent = TD3(environment=env,    #taken from sb3 zoo
-        actor=td3_Actor,
-        critic=td3_Critic, 
+    td3_agent = TD3(environment=env,
+        actor=td3_Actor(obs_dim, act_dim, env.action_space.high[0]),
+        critic=td3_Critic(obs_dim, act_dim), 
         buffer_size=200000, 
-        gamma=0.98, 
-        train_after=10000,
-        target_policy_noise=0.1,
-        EPS_END=0.1)
+        batch_size=256,
+        tau=0.01,
+        gamma=0.99)
 
     replay_buffer = deque(maxlen=td3_agent.buffer_size)
 
     s_t = env.reset()
 
     for i in range(300000):
-        a_t = td3_agent.actor(torch.from_numpy(s_t)).detach()
-        a_t = td3_agent.noisy_action(a_t)
-        
-        s_tp1, r_t, done, info = env.step(a_t)
-        
+        a_t = td3_agent.select_action(s_t)
+                
+        s_tp1, r_t, done, _ = env.step(a_t)
+        r_sum += r_t
         replay_buffer.append([s_t, a_t, r_t, s_tp1, done])
+        s_t = s_tp1
 
-        if len(replay_buffer) >= 100 and i > td3_agent.train_after:
-            batch = Transition(*zip(*random.sample(replay_buffer, k=100)))
+        if len(replay_buffer) >= td3_agent.batch_size and i >= td3_agent.train_after:
+            batch = Transition(*zip(*random.sample(replay_buffer, k=td3_agent.batch_size)))
             loss = td3_agent.update(batch, i)
 
-            if i % 500 == 0: 
-                c_losses.append(loss)
-                avg_c_losses = sum(c_losses)/100    #for formatting, I want to round it better than just making it an int!
+            if i % td3_agent.verbose == 0:
                 avg_r = sum(episodic_rewards)/10
-                print(f"Episodes: {episodes} | Timestep: {i} | Avg. Critic Loss: {int(avg_c_losses)} | Avg. Reward: {avg_r}, [{len(episodic_rewards)}]")
+                print(f"Episodes: {episodes} | Timestep: {i} | Avg. Reward: {avg_r}, [{len(episodic_rewards)}]")
 
         if done:
             episodes += 1
-            episodic_rewards.append(int(info['episode']['r']))
-            s_tp1 = env.reset()
+            episodic_rewards.append(r_sum)
+            r_sum = 0
+            s_t = env.reset()
+        
 
-        s_t = s_tp1
-
-    #Render Trained agent
+    """
+    Render trained agent
+    """
+    td3_agent.actor.eval()
     s_t = env.reset()
     while True:
         env.render()
-        a_t = np.array(td3_agent.actor(torch.from_numpy(s_t)).detach())
+        a_t = td3_agent.select_action(s_t).numpy()
         s_tp1, r_t, done, _ = env.step(a_t)
-        if done:
-            s_tp1 = env.reset()
-
         s_t = s_tp1
+        if done:
+            s_t = env.reset()        
 
 if __name__ == "__main__":
    # stuff only to run when not called via 'import' here
