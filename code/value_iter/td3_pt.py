@@ -10,7 +10,7 @@ from collections import deque
 from typing import NamedTuple
 import random
 
-from code.utils.models import td3_Actor, td3_Critic
+#from code.utils.models import td3_Actor, td3_Critic
 class Transition(NamedTuple):
     s: list  # state
     a: float  # action
@@ -128,10 +128,12 @@ def main():
     td3_agent = TD3(environment=env,
         actor=td3_Actor(obs_dim, act_dim, env.action_space.high[0]),
         critic=td3_Critic(obs_dim, act_dim), 
+        lr=1e-3,
+        train_after=10000,
         buffer_size=200000, 
-        batch_size=256,
-        tau=0.01,
-        gamma=0.99)
+        batch_size=100,
+        gamma=0.98,
+        verbose=2000)
 
     replay_buffer = deque(maxlen=td3_agent.buffer_size)
 
@@ -150,7 +152,7 @@ def main():
             loss = td3_agent.update(batch, i)
 
             if i % td3_agent.verbose == 0:
-                avg_r = sum(episodic_rewards)/10
+                avg_r = sum(episodic_rewards)/len(episodic_rewards)
                 print(f"Episodes: {episodes} | Timestep: {i} | Avg. Reward: {avg_r}, [{len(episodic_rewards)}]")
 
         if done:
