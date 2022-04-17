@@ -7,18 +7,11 @@ import numpy as np
 import gym
 import copy
 from gym.wrappers import RecordEpisodeStatistics
-from code.utils.models import td3_Critic, sac_Actor
-
 from collections import deque
-from typing import NamedTuple
 import random
 
-class Transition(NamedTuple):
-    s: list  # state
-    a: float  # action
-    r: float  # reward
-    s_p: list  # next state
-    d: int  # done
+from code.utils.models import td3_Critic, sac_Actor
+from code.utils.memory import Transition
 
 class SAC():
     def __init__(self, 
@@ -59,8 +52,9 @@ class SAC():
 
         # action rescaling
         #print(self.act_high, self.act_low)
-        self.action_scale = 1   #torch.IntTensor((self.act_high - (self.act_low)) / 2.0).float()
-        self.action_bias = 0    #torch.FloatTensor((self.act_high + (self.act_low)) / 2.0)
+        self.action_scale = 1   #int((self.act_high - (self.act_low)) / 2.0)
+        self.action_bias = 0    #int((self.act_high + (self.act_low)) / 2.0)
+        #print(self.action_scale, self.action_bias)
 
     def update(self, batch, i):
         s = torch.from_numpy(np.array(batch.s)).type(torch.float32)
@@ -73,7 +67,7 @@ class SAC():
         with torch.no_grad():
             a_p, log_pi, _ = self.select_action(s_p)
             target_q1, target_q2 = self.critic_target(s_p, a_p)
-            target_q = torch.min(target_q1, target_q2) - log_pi * self.alpha
+            target_q = torch.min(target_q1, target_q2) - (log_pi * self.alpha)
             y = r + self.gamma * target_q * (1 - d)
 
         q1, q2 = self.critic(s, a)
@@ -88,7 +82,7 @@ class SAC():
         #delayed Actor update
         if i % self.policy_delay == 0:
             a_p, log_pi, _ = self.select_action(s)
-            policy_loss = ((self.alpha * log_pi) - self.critic.q1_forward(s, a)).mean()
+            policy_loss = ((log_pi * self.alpha) - self.critic.q1_forward(s, a)).mean()
 
             self.actor_optimizer.zero_grad()
             policy_loss.backward()
@@ -120,28 +114,33 @@ class SAC():
         return a
 
 def main():
-    env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
+    #env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
+    env_name = 'LunarLanderContinuous-v2'
     env = gym.make(env_name)
     env = RecordEpisodeStatistics(env)
 
-    episodic_rewards = deque(maxlen=10)
+    episodic_rewards = deque(maxlen=20)
     episodes = 0
     r_sum = 0
 
     sac_agent = SAC(environment=env,    #taken from sb3 zoo
         actor=sac_Actor,
         critic=td3_Critic,
-        buffer_size=200000, 
-        tau=0.01,
-        gamma=0.98, 
-        train_after=1000)
+        lr=1e-3,
+        tau=7.3e-4,
+        train_after=1000,
+        gamma=0.99,
+        verbose=500)
 
     replay_buffer = deque(maxlen=sac_agent.buffer_size)
 
     s_t = env.reset()
 
     for i in range(300000):
-        a_t = sac_agent.act(s_t)
+        if i >= sac_agent.train_after:
+            a_t = sac_agent.act(s_t)
+        else:
+            a_t = env.action_space.sample()
         
         s_tp1, r_t, done, _ = env.step(a_t)
         r_sum += r_t

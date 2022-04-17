@@ -7,16 +7,10 @@ import copy
 from gym.wrappers import RecordEpisodeStatistics
 from torch.nn.utils import clip_grad_norm_
 from collections import deque
-from typing import NamedTuple
 import random
 
-#from code.utils.models import td3_Actor, td3_Critic
-class Transition(NamedTuple):
-    s: list  # state
-    a: float  # action
-    r: float  # reward
-    s_p: list  # next state
-    d: int  # done
+from code.utils.models import td3_Actor, td3_Critic
+from code.utils.memory import Transition
 
 class TD3():
     def __init__(self, 
@@ -113,15 +107,15 @@ class TD3():
 
 def main():
     #env_name = 'MountainCarContinuous-v0'
-    env_name = 'LunarLanderContinuous-v2'
+    #env_name = 'LunarLanderContinuous-v2'
     #env_name = 'Pendulum-v1'
-    #env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
+    env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
     env = gym.make(env_name)
     env = RecordEpisodeStatistics(env)
     obs_dim = env.observation_space.shape[0]            
     act_dim = env.action_space.shape[0]
 
-    episodic_rewards = deque(maxlen=10)
+    episodic_rewards = deque(maxlen=20)
     episodes = 0
     r_sum = 0
 
@@ -129,11 +123,10 @@ def main():
         actor=td3_Actor(obs_dim, act_dim, env.action_space.high[0]),
         critic=td3_Critic(obs_dim, act_dim), 
         lr=1e-3,
-        train_after=10000,
-        buffer_size=200000, 
-        batch_size=100,
+        tau=0.01,
+        train_after=1000,
         gamma=0.98,
-        verbose=2000)
+        verbose=500)
 
     replay_buffer = deque(maxlen=td3_agent.buffer_size)
 
