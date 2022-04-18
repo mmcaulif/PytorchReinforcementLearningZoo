@@ -14,41 +14,55 @@ from code.utils.models import ddpg_Critic, sac_Actor
 from code.utils.attacker import Attacker
 from code.fyp_algos.ciq_pt import Transition
 
-class encoder_Critic(nn.Module):
-    def __init__(self, stacks, num_treatment, obs_dims, act_dims, enc_dim):
-        super(encoder_Critic, self).__init__()
-        self.enc_dim = enc_dim
+class encoder1_Critic(nn.Module):
+    def __init__(self, obs_dims, act_dims):
+        super(encoder1_Critic, self).__init__()
 
-        self.encoder = nn.Sequential(nn.Linear(obs_dims*stacks, enc_dim),
+        self.encoder = nn.Sequential(nn.Linear(obs_dims+act_dims, 400),
                                      nn.ReLU(),
-                                     #nn.Linear(enc_dim, enc_dim),
-                                     #nn.ReLU(),
                                      )
 
-        self.logits_t = nn.Sequential(nn.Linear(enc_dim, enc_dim//2),
+        self.fc = nn.Sequential(nn.Linear(400, 300),
+                                nn.ReLU(),
+                                nn.Linear(300, 1)
+                                )
+        
+    def forward(self, state, action):        
+        q = self.fc(self.encoder(torch.cat([state, action], 1)))
+        return q, q
+    
+    def q1_forward(self, state, action):
+        q = self.fc(self.encoder(torch.cat([state, action], 1)))
+        return q
+class encoder2_Critic(nn.Module):
+    def __init__(self, num_treatment, obs_dims, act_dims):
+        super(encoder2_Critic, self).__init__()
+
+        self.encoder = nn.Sequential(nn.Linear(obs_dims+act_dims, 400),
+                                     nn.ReLU(),
+                                     )
+
+        self.logits_t = nn.Sequential(nn.Linear(400, 64),
                                       nn.ReLU(),
-                                      nn.Linear(enc_dim//2, num_treatment)
+                                      nn.Linear(64, num_treatment)
                                       )
 
-        self.fc = nn.Sequential(nn.Linear(enc_dim+act_dims+num_treatment, 256),
+        self.fc = nn.Sequential(nn.Linear(400+num_treatment, 300),
                                 nn.ReLU(),
-                                nn.Linear(256, 256),
-                                nn.ReLU(),
-                                nn.Linear(256, 1)
+                                nn.Linear(300, 1)
                                 )
         
     def forward(self, state, action, t_labels):
-        zs = self.encoder(state)
-        zsa = torch.cat([zs, action], 1)
+        z = self.encoder(torch.cat([state, action], 1))
 
-        t_values = self.logits_t(zs)
+        t_values = self.logits_t(z)
         idx = torch.argmax(t_values, dim=-1).long().unsqueeze(-1)
         t_p = torch.zeros_like(t_values).scatter(-1, idx, 1)
         
         if self.training:
-            q = self.fc(torch.cat([zsa, t_labels], dim=-1))
+            q = self.fc(torch.cat([z, t_labels], dim=-1))
         else:
-            q = self.fc(torch.cat([zsa, t_p], dim=-1))
+            q = self.fc(torch.cat([z, t_p], dim=-1))
 
         return q, t_labels#, t_p    #altered for debugging purposes
 class CIQ_SAC():
@@ -162,7 +176,7 @@ def main():
 
     sac_agent = CIQ_SAC(environment=env,    #taken from sb3 zoo
         actor=sac_Actor(4 * stacks, 1),
-        critic=encoder_Critic(stacks, 4, 4, 1),
+        critic=encoder2_Critic(stacks, 4, 4, 1),
         buffer_size=200000,
         tau=0.01,
         gamma=0.98,

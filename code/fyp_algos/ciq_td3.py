@@ -11,8 +11,8 @@ import random
 import argparse
 
 from code.value_iter.td3_pt import TD3
-from code.utils.models import td3_Actor, td3_Critic
-from code.fyp_algos.ciq_sac import encoder_Critic
+from code.utils.models import ddpg_Critic, td3_Actor, td3_Critic
+from code.fyp_algos.ciq_sac import encoder1_Critic, encoder2_Critic
 from code.utils.attacker import Attacker
 from code.fyp_algos.ciq_pt import Transition
 
@@ -130,8 +130,10 @@ def main():
 
     env = gym.make(env_name)
     env = Attacker(env, p=args.probs)
-    stacks = 2
-    env = FrameStack(env, stacks)
+    stacks = 1
+    obs_dims = env.observation_space.shape[0] * stacks
+    act_dims = env.action_space.shape[0]
+    #env = FrameStack(env, stacks)
 
     episodic_rewards = deque(maxlen=10)
     episodes = 0
@@ -139,32 +141,36 @@ def main():
     if args.vanilla:
         print(f"Using vanilla td3 with P: {args.probs}")
         ciq_agent = TD3(environment=env,
-            actor=td3_Actor(8, 1, env.action_space.high[0]),
-            critic=td3_Critic(8, 1),
-            tau=0.01,
-            gamma=0.98, 
-            train_after=1000)
+            actor=td3_Actor(obs_dims, 1, env.action_space.high[0]),
+            #critic=ddpg_Critic(obs_dims, act_dims),
+            critic=encoder1_Critic(obs_dims, act_dims),
+            lr=1e-3,
+            train_after=10000,
+            gamma=0.98,
+            target_policy_noise=0.1,
+            verbose=500)
 
     else:
         print(f"Using ciq_td3 with P: {args.probs}")
         ciq_agent = CIQ_TD3(environment=env,
-            actor=td3_Actor(8, 1, env.action_space.high[0]),
-            critic=encoder_Critic(stacks, 4, 4, 1, 128),
-            tau=0.01,
-            gamma=0.98, 
-            train_after=1000)
+            actor=td3_Actor(obs_dims, 1, env.action_space.high[0]),
+            critic=encoder2_Critic(4, obs_dims, 1),
+            lr=1e-3,
+            train_after=10000,
+            gamma=0.98,
+            target_policy_noise=0.1)
 
     replay_buffer = deque(maxlen=ciq_agent.buffer_size)
     r_sum = 0
     s_t = env.reset()
-    s_t = np.concatenate([s_t[0], s_t[1]])
+    #s_t = np.concatenate([s_t[0], s_t[1]])
 
     for i in range(30000+1):
         a_t = ciq_agent.select_action(s_t)
         
         s_tp1, r_t, done, i_t = env.step(a_t)
         r_sum += r_t
-        s_tp1 = np.concatenate([s_tp1[0], s_tp1[1]])
+        #s_tp1 = np.concatenate([s_tp1[0], s_tp1[1]])
         replay_buffer.append([s_t, a_t, r_t, s_tp1, done, i_t])
         s_t = s_tp1
 
@@ -181,21 +187,21 @@ def main():
             episodic_rewards.append(r_sum)
             r_sum = 0
             s_t = env.reset()
-            s_t = np.concatenate([s_t[0], s_t[1]])
+            #s_t = np.concatenate([s_t[0], s_t[1]])
         
     #Render Trained agent
     ciq_agent.actor.eval()
     s_t = env.reset()
-    s_t = np.concatenate([s_t[0], s_t[1]])
+    #s_t = np.concatenate([s_t[0], s_t[1]])
     while True:
         env.render()
-        a_t = ciq_agent.select_action(s_t).numpy()
+        a_t = ciq_agent.select_action(s_t)
         s_tp1, r_t, done, _ = env.step(a_t)
         s_t = s_tp1
-        s_t = np.concatenate([s_t[0], s_t[1]])
+        #s_t = np.concatenate([s_t[0], s_t[1]])
         if done:
             s_t = env.reset()
-            s_t = np.concatenate([s_t[0], s_t[1]])
+            #s_t = np.concatenate([s_t[0], s_t[1]])
         
 if __name__ == "__main__":
    # stuff only to run when not called via 'import' here
