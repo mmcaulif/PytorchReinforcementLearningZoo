@@ -5,9 +5,9 @@ import torch.nn.functional as F
 class td3_Actor(nn.Module):
 	def __init__(self, state_dim, action_dim, max_action):
 		super(td3_Actor, self).__init__()
-		self.l1 = nn.Linear(state_dim, 256)
-		self.l2 = nn.Linear(256, 256)
-		self.l3 = nn.Linear(256, action_dim)
+		self.l1 = nn.Linear(state_dim, 400)
+		self.l2 = nn.Linear(400, 300)
+		self.l3 = nn.Linear(300, action_dim)
 		self.max_action = max_action
 		
 	def forward(self, state):
@@ -20,13 +20,13 @@ class td3_Critic(nn.Module):
 	def __init__(self, state_dim, action_dim):
 		super(td3_Critic, self).__init__()
 
-		self.l1 = nn.Linear(state_dim + action_dim, 256)
-		self.l2 = nn.Linear(256, 256)
-		self.l3 = nn.Linear(256, 1)
+		self.l1 = nn.Linear(state_dim + action_dim, 400)
+		self.l2 = nn.Linear(400, 300)
+		self.l3 = nn.Linear(300, 1)
 
-		self.l4 = nn.Linear(state_dim + action_dim, 256)
-		self.l5 = nn.Linear(256, 256)
-		self.l6 = nn.Linear(256, 1)
+		self.l4 = nn.Linear(state_dim + action_dim, 400)
+		self.l5 = nn.Linear(400, 300)
+		self.l6 = nn.Linear(300, 1)
 
 
 	def forward(self, state, action):
@@ -61,14 +61,23 @@ class ddpg_Critic(nn.Module):
 		super(ddpg_Critic, self).__init__()
 
 		self.critic = torch.nn.Sequential(
-            nn.Linear(state_dim + action_dim, 256),
+            nn.Linear(state_dim + action_dim, 400),
 			nn.ReLU(),
-            nn.Linear(256, 256),
+            nn.Linear(400, 300),
 			nn.ReLU(),
-			nn.Linear(256, 1)
+			nn.Linear(300, 1)
         )
 
 	def forward(self, state, action):
+		try:
+			sa = torch.cat([state, action], 1)
+		except:	
+			sa = torch.cat([state, action], -1)
+
+		q = self.critic(sa)
+		return q, q
+
+	def q1_forward(self, state, action):
 		try:
 			sa = torch.cat([state, action], 1)
 		except:	

@@ -124,7 +124,7 @@ def main():
         critic=td3_Critic(obs_dim, act_dim), 
         lr=1e-3,
         tau=0.01,
-        train_after=1000,
+        train_after=10000,
         gamma=0.98,
         verbose=500)
 
