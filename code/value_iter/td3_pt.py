@@ -133,7 +133,10 @@ def main():
     s_t = env.reset()
 
     for i in range(300000):
-        a_t = td3_agent.select_action(s_t)
+        if i >= td3_agent.train_after:
+            a_t = td3_agent.select_action(s_t)
+        else:
+            a_t = env.action_space.sample()
                 
         s_tp1, r_t, done, _ = env.step(a_t)
         r_sum += r_t

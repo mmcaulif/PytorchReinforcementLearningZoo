@@ -1,3 +1,4 @@
+import argparse
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -10,6 +11,7 @@ from gym.wrappers import FrameStack
 from collections import deque
 import random
 
+from code.value_iter.sac_pt import SAC
 from code.utils.models import ddpg_Critic, sac_Actor
 from code.utils.attacker import Attacker
 from code.fyp_algos.ciq_pt import Transition
@@ -34,6 +36,7 @@ class encoder1_Critic(nn.Module):
     def q1_forward(self, state, action):
         q = self.fc(self.encoder(torch.cat([state, action], 1)))
         return q
+
 class encoder2_Critic(nn.Module):
     def __init__(self, num_treatment, obs_dims, act_dims):
         super(encoder2_Critic, self).__init__()
@@ -65,6 +68,7 @@ class encoder2_Critic(nn.Module):
             q = self.fc(torch.cat([z, t_p], dim=-1))
 
         return q, t_labels#, t_p    #altered for debugging purposes
+
 class CIQ_SAC():
     def __init__(self, 
         environment, 
@@ -90,6 +94,9 @@ class CIQ_SAC():
         self.policy_delay = policy_delay
         self.verbose = verbose
 
+        self.act_high = environment.action_space.high[0]
+        self.act_low = environment.action_space.low[0]
+
         self.actor = actor
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr)
 
@@ -99,8 +106,8 @@ class CIQ_SAC():
 
         # action rescaling
         #print(self.act_high, self.act_low)
-        self.action_scale = 1   #torch.IntTensor((1 - (-1)) / 2.0).float()
-        self.action_bias = 0    #torch.FloatTensor((1 + (-1)) / 2.0)
+        self.action_scale = int((self.act_high - (self.act_low)) / 2.0)
+        self.action_bias = int((self.act_high + (self.act_low)) / 2.0)
 
     def update(self, batch, i):
         s = torch.from_numpy(np.array(batch.s)).type(torch.float32)
@@ -122,8 +129,8 @@ class CIQ_SAC():
 
         i_p = self.critic(s_p, a_p, i_t)[1]
 
-        #i_loss = F.binary_cross_entropy_with_logits(i_p, i_t)
-        critic_loss = F.mse_loss(q, y)# + i_loss
+        i_loss = F.binary_cross_entropy_with_logits(i_p, i_t)
+        critic_loss = F.mse_loss(q, y) + i_loss
 
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
@@ -132,7 +139,7 @@ class CIQ_SAC():
 
         if i % self.policy_delay == 0:
             a_p, log_pi, _ = self.select_action(s)
-            policy_loss = ((self.alpha * log_pi) - self.critic(s, a, i_ghost)[0]).mean()
+            policy_loss = -(self.critic(s, a_p, i_ghost)[0] - (log_pi * self.alpha)).mean()
 
             self.actor_optimizer.zero_grad()
             policy_loss.backward()
@@ -164,36 +171,64 @@ class CIQ_SAC():
         return a
 
 def main():
-    P = 0.0
+    parser = argparse.ArgumentParser()
+    parser.add_argument("probs", help="Probability of interference", type=float)
+    parser.add_argument("--vanilla", help="TD3 or TD3_ciq", action="store_true")
+    args = parser.parse_args()
+
     env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
     env = gym.make(env_name)
-    env = Attacker(env, p=P)
-    stacks = 2
-    env = FrameStack(env, stacks)
+    env = Attacker(env, p=args.probs)
+    stacks = 1
+    #env = FrameStack(env, stacks)
     
-    episodic_rewards = deque(maxlen=5)
+    obs_dims = env.observation_space.shape[0] * stacks
+    act_dims = env.action_space.shape[0]
+    
+    episodic_rewards = deque(maxlen=10)
     episodes = 0
 
-    sac_agent = CIQ_SAC(environment=env,    #taken from sb3 zoo
-        actor=sac_Actor(4 * stacks, 1),
-        critic=encoder2_Critic(stacks, 4, 4, 1),
-        buffer_size=200000,
-        tau=0.01,
-        gamma=0.98,
-        train_after=1000)
+    """
+    https://github.com/DLR-RM/rl-baselines3-zoo/blob/master/hyperparams/sac.yml
+    """
+
+    if args.vanilla:
+        print(f"Using vanilla sac with P: {args.probs}")
+        sac_agent = SAC(environment=env,    #taken from sb3 zoo
+            actor=sac_Actor(obs_dims, act_dims),
+            critic=encoder1_Critic(4, obs_dims, act_dims),
+            lr=1e-3,
+            buffer_size=200000,
+            train_after=10000,
+            #alpha=0.1
+            )
+    
+    else:
+        print(f"Using ciq_sac with P: {args.probs}")
+        sac_agent = CIQ_SAC(environment=env,    #taken from sb3 zoo
+            actor=sac_Actor(obs_dims, act_dims),
+            critic=encoder2_Critic(4, obs_dims, act_dims),
+            lr=1e-3,
+            buffer_size=200000,
+            train_after=10000,
+            #alpha=0.1
+            )
 
     replay_buffer = deque(maxlen=sac_agent.buffer_size)
 
     r_sum = 0
     s_t = env.reset()
-    s_t = np.concatenate([s_t[0], s_t[1]])
+    #s_t = np.concatenate([s_t[0], s_t[1]])
 
-    for i in range(300000):
-        a_t = sac_agent.act(s_t)
+    for i in range(25000+1):
+        if i >= sac_agent.train_after:
+            a_t = sac_agent.act(s_t)
+        else:
+            a_t = env.action_space.sample()
         
         s_tp1, r_t, done, i_t = env.step(a_t)
         r_sum += r_t
-        s_tp1 = np.concatenate([s_tp1[0], s_tp1[1]])
+        #s_tp1 = np.concatenate([s_tp1[0], s_tp1[1]])
         replay_buffer.append([s_t, a_t, r_t, s_tp1, done, i_t])
 
         if len(replay_buffer) >= sac_agent.batch_size and i >= sac_agent.train_after:
@@ -201,7 +236,7 @@ def main():
             loss = sac_agent.update(batch, i)
 
             if i % sac_agent.verbose == 0: 
-                avg_r = sum(episodic_rewards)/10
+                avg_r = sum(episodic_rewards)/len(episodic_rewards)
                 print(f"Episodes: {episodes} | Timestep: {i} | Avg. Reward: {avg_r}, [{len(episodic_rewards)}]")
 
         if done:
@@ -209,7 +244,7 @@ def main():
             episodic_rewards.append(r_sum)
             r_sum = 0
             s_tp1 = env.reset()
-            s_tp1 = np.concatenate([s_tp1[0], s_tp1[1]])
+            #s_tp1 = np.concatenate([s_tp1[0], s_tp1[1]])
 
         s_t = s_tp1
 

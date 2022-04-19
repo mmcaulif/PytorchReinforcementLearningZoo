@@ -37,23 +37,20 @@ class SAC():
         self.train_after = train_after
         self.policy_delay = policy_delay
         self.verbose = verbose
-
-        obs_dim = environment.observation_space.shape[0]            
-        act_dim = environment.action_space.shape[0]    
         self.act_high = environment.action_space.high[0]
         self.act_low = environment.action_space.low[0]
 
-        self.actor = actor(obs_dim, act_dim)
+        self.actor = actor
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=lr)
 
-        self.critic = critic(obs_dim, act_dim)
+        self.critic = critic
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=lr)
 
         # action rescaling
         #print(self.act_high, self.act_low)
-        self.action_scale = 1   #int((self.act_high - (self.act_low)) / 2.0)
-        self.action_bias = 0    #int((self.act_high + (self.act_low)) / 2.0)
+        self.action_scale = int((self.act_high - (self.act_low)) / 2.0)
+        self.action_bias = int((self.act_high + (self.act_low)) / 2.0)
         #print(self.action_scale, self.action_bias)
 
     def update(self, batch, i):
@@ -82,7 +79,7 @@ class SAC():
         #delayed Actor update
         if i % self.policy_delay == 0:
             a_p, log_pi, _ = self.select_action(s)
-            policy_loss = ((log_pi * self.alpha) - self.critic.q1_forward(s, a)).mean()
+            policy_loss = -(self.critic.q1_forward(s, a_p) - (log_pi * self.alpha)).mean()
 
             self.actor_optimizer.zero_grad()
             policy_loss.backward()
@@ -152,7 +149,7 @@ def main():
             loss = sac_agent.update(batch, i)
 
             if i % sac_agent.verbose == 0:
-                avg_r = sum(episodic_rewards)/10
+                avg_r = sum(episodic_rewards)/len(episodic_rewards)
                 print(f"Episodes: {episodes} | Timestep: {i} | Avg. Reward: {avg_r}, [{len(episodic_rewards)}]")
 
         if done:

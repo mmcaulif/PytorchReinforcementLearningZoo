@@ -118,15 +118,7 @@ def main():
     parser.add_argument("--vanilla", help="TD3 or TD3_ciq", action="store_true")
     args = parser.parse_args()
 
-    env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0' 
-    
-    """
-    -Current iteration learns cartpole continuous very quickly in < 10,000 steps at P=0! Enc dim = 256
-    -Now lets try creep the system in, starting with P=0.1 it gets it between 10k-20k steps
-    -Needs more and longer testing at P=0.2
-
-    -Initial experiment at P=0.5 shows some promise for being able to very slowly learn (>20,000)
-    """
+    env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
 
     env = gym.make(env_name)
     env = Attacker(env, p=args.probs)
@@ -141,21 +133,21 @@ def main():
     if args.vanilla:
         print(f"Using vanilla td3 with P: {args.probs}")
         ciq_agent = TD3(environment=env,
-            actor=td3_Actor(obs_dims, 1, env.action_space.high[0]),
-            #critic=ddpg_Critic(obs_dims, act_dims),
+            actor=td3_Actor(obs_dims, act_dims, env.action_space.high[0]),
             critic=encoder1_Critic(obs_dims, act_dims),
             lr=1e-3,
+            buffer_size=200000,
             train_after=10000,
             gamma=0.98,
-            target_policy_noise=0.1,
-            verbose=500)
+            target_policy_noise=0.1)
 
     else:
         print(f"Using ciq_td3 with P: {args.probs}")
         ciq_agent = CIQ_TD3(environment=env,
-            actor=td3_Actor(obs_dims, 1, env.action_space.high[0]),
-            critic=encoder2_Critic(4, obs_dims, 1),
+            actor=td3_Actor(obs_dims, act_dims, env.action_space.high[0]),
+            critic=encoder2_Critic(4, obs_dims, act_dims),
             lr=1e-3,
+            buffer_size=200000,
             train_after=10000,
             gamma=0.98,
             target_policy_noise=0.1)
@@ -165,8 +157,11 @@ def main():
     s_t = env.reset()
     #s_t = np.concatenate([s_t[0], s_t[1]])
 
-    for i in range(30000+1):
-        a_t = ciq_agent.select_action(s_t)
+    for i in range(25000+1):
+        if i >= ciq_agent.train_after:
+            a_t = ciq_agent.select_action(s_t)
+        else:
+            a_t = env.action_space.sample()
         
         s_tp1, r_t, done, i_t = env.step(a_t)
         r_sum += r_t
@@ -179,7 +174,7 @@ def main():
             loss = ciq_agent.update(batch, i)
 
             if i % 500 == 0:     #for formatting, I want to round it better than just making it an int!
-                avg_r = sum(episodic_rewards)/10
+                avg_r = sum(episodic_rewards)/len(episodic_rewards)
                 print(f"Episodes: {episodes} | Timestep: {i} | Avg. Reward: {avg_r}, [{len(episodic_rewards)}]")
 
         if done:

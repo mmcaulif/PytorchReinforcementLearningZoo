@@ -2,13 +2,16 @@ import gym
 from gym.wrappers import FrameStack
 import numpy as np
 import torch
-from code.utils.attacker import Attacker
+#from code.utils.attacker import Attacker
 
 stacks = 2
 env = gym.make('CartPole-v0')
-env = Attacker(env)
-env = FrameStack(env, 2)
+#env = Attacker(env)
+env = FrameStack(env, 3)
 s_t = env.reset()
+s_t = np.array([s_t[i] for i in range(len(s_t))])
+print(s_t, s_t.flatten())
+
 for i in range(20):
     a_t = env.action_space.sample()
     s_tp1, r_t, d, i_t = env.step(a_t)
