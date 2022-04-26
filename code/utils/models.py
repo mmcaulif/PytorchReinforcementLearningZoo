@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributions import Normal
 
 class td3_Actor(nn.Module):
 	def __init__(self, state_dim, action_dim, max_action):
@@ -140,6 +141,32 @@ class PPO_model(torch.nn.Module):
         v = self.critic(s)
         pi = self.actor(s)
         return v, pi
+
+class PPO_cont_model(torch.nn.Module):
+	def __init__(self, input_size, action_size):
+		super(PPO_cont_model, self).__init__()
+
+		self.critic = torch.nn.Sequential(
+			nn.Linear(input_size, 256),
+			nn.Linear(256, 1)
+		)
+		self.mu = torch.nn.Sequential(
+			nn.Linear(input_size, 256),
+			nn.Linear(256, action_size),
+			nn.Softmax(dim=-1)
+		)
+		self.action_log_std = nn.Parameter(torch.ones(action_size))
+
+	def forward(self, s):
+		v = self.critic(s)
+		mu = self.mu(s)
+		return v, mu
+
+	def get_dist(self, s):
+		mu = self.mu(s)
+		std = torch.exp(self.action_log_std.expand_as(mu))
+		dist = Normal(mu, std)
+		return dist
 
 class sac_Actor(nn.Module):
     def __init__(self, state_dim, action_dim):

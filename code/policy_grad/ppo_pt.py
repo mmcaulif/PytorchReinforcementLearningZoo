@@ -6,8 +6,8 @@ import numpy as np
 import gym
 from collections import deque
 from gym.wrappers import RecordEpisodeStatistics
-from utils.models import PPO_model
-from utils.memory import Rollout_Memory
+from code.utils.models import PPO_model
+from code.utils.memory import Rollout_Memory
 
 #https://github.com/nikhilbarhate99/PPO-PyTorch/blob/master/PPO.py  shows off the ratios well
 class PPO:
@@ -22,7 +22,8 @@ class PPO:
         verbose=20,
         learning_rate=2.5e-4,
         clip_range=0.2,
-        max_grad_norm=0.5
+        max_grad_norm=0.5,
+        k_epochs=10
     ):
         self.network = network
         self.gamma = gamma
@@ -34,6 +35,7 @@ class PPO:
         self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate, eps=1e-5)   #ppo optimiser
         self.clip_range = clip_range
         self.max_grad_norm = max_grad_norm
+        self.k_epochs = k_epochs
 
     def calc_gae(self, s_r, r_r, d_r, final_r): #Still need to understand!
         gae_returns = torch.zeros_like(r_r)
@@ -60,41 +62,51 @@ class PPO:
 
         V_rollout = self.network(s_r.float())[0]
 
-        old_probs = Categorical(pi_r).log_prob(a_r).detach()
+        #old_probs = Categorical(pi_r).log_prob(a_r).detach()
+        old_probs = pi_r.detach()
 
-        for iter in range(0, len, self.batch_size):  
-            iter_end = iter + self.batch_size
+        indxs = np.arange(len)
 
-            #new outputs
-            new_v, new_pi = self.network(s_r[iter:iter_end])
+        for epoch in range(self.k_epochs):
+            np.random.shuffle(indxs)
 
-            #critic
-            critic_loss = F.mse_loss(Q_rollout[iter:iter_end], new_v.squeeze(-1))
+            for iter in range(0, len, self.batch_size):  
+                iter_end = iter + self.batch_size
+                mb_indxs = indxs[iter:iter_end]
 
-            #actor
-            new_dist = Categorical(new_pi)
-            log_probs = new_dist.log_prob(a_r[iter:iter_end])
-            entropy = new_dist.entropy().mean()   #ppo entropy loss
-            
-            adv = Q_rollout[iter:iter_end] - V_rollout[iter:iter_end].detach()
+                #new outputs
+                new_v, new_pi = self.network(s_r[mb_indxs])
 
-            ratio = torch.exp(log_probs - old_probs[iter:iter_end])   #ppo policy loss function
-            clipped_ratio = torch.clamp(ratio, 1-self.clip_range, 1+self.clip_range)
-            actor_loss = -(torch.min(ratio * adv, clipped_ratio * adv)).mean()
+                #critic
+                critic_loss = F.mse_loss(Q_rollout[mb_indxs], new_v.squeeze(-1))
+                #print(Q_rollout, Q_rollout[mb_indxs], mb_indxs, '\n')
 
-            loss = actor_loss + (critic_loss * 0.5) - (entropy * self.ent_coeff)
+                #actor
+                new_dist = Categorical(new_pi)
+                log_probs = new_dist.log_prob(a_r[mb_indxs])
+                entropy = new_dist.entropy().mean()   #ppo entropy loss
+                
+                adv = Q_rollout[mb_indxs] - V_rollout[mb_indxs].detach()
 
-            self.optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.max_grad_norm) #ppo gradient clipping
-            self.optimizer.step()
+                ratio = torch.exp(log_probs - old_probs[mb_indxs])   #ppo policy loss function
+                clipped_ratio = torch.clamp(ratio, 1-self.clip_range, 1+self.clip_range)
+                actor_loss = -(torch.min(ratio * adv, clipped_ratio * adv)).mean()
 
-        return loss
+                loss = actor_loss + (critic_loss * 0.5) - (entropy * self.ent_coeff)
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.max_grad_norm) #ppo gradient clipping
+                self.optimizer.step()
+
+            return loss
         
     def select_action(self, s):
-        a_policy = self.network(torch.from_numpy(s).float())[1]
-        a = int(torch.multinomial(a_policy, 1).detach())
-        return a, a_policy
+        a_policy = self.network.actor(torch.from_numpy(s).float())
+        dist = Categorical(a_policy)
+        a = dist.sample().detach()
+        a_log_prob = dist.log_prob(a)
+        return a.numpy(), a_log_prob #, a_policy
 
 def main():
     env_name = "CartPole-v1"
@@ -102,12 +114,12 @@ def main():
     num_envs = 1
     #env = RecordEpisodeStatistics(gym.vector.make(env_name, num_envs=num_envs))
     env = RecordEpisodeStatistics(gym.make(env_name))
-    obs_dim = 4
-    act_dim = 2
+    obs_dim = env.observation_space.shape[0]
+    act_dim = env.action_space.n
     avg_r = deque(maxlen=50)
 
     buffer = Rollout_Memory()
-    ppo_agent = PPO(PPO_model(obs_dim, act_dim), 0.98, 0.8, 0.0, 1024, 4)
+    ppo_agent = PPO(PPO_model(obs_dim, act_dim), 0.98, 0.8, 0.0, 1024, 4, 25, k_epochs=1)
 
     s_t = env.reset()
     for i in range(1, 5000):

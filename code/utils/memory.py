@@ -17,8 +17,8 @@ class Rollout_Memory(object):
         self.qty += 1
     
     def pop_all(self):
-        states = torch.as_tensor(np.array(self.states))
-        actions = torch.LongTensor(self.actions)
+        states = torch.as_tensor(np.array(self.states)).float()
+        actions = torch.as_tensor(np.array(self.actions)).float()
         rewards = torch.FloatTensor(self.rewards)
         policies = torch.stack(self.policies).float()
         dones = torch.IntTensor(self.dones)
