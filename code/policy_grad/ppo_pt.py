@@ -62,7 +62,6 @@ class PPO:
 
         V_rollout = self.network(s_r.float())[0]
 
-        #old_probs = Categorical(pi_r).log_prob(a_r).detach()
         old_probs = pi_r.detach()
 
         indxs = np.arange(len)
@@ -79,7 +78,6 @@ class PPO:
 
                 #critic
                 critic_loss = F.mse_loss(Q_rollout[mb_indxs], new_v.squeeze(-1))
-                #print(Q_rollout, Q_rollout[mb_indxs], mb_indxs, '\n')
 
                 #actor
                 new_dist = Categorical(new_pi)
@@ -119,7 +117,15 @@ def main():
     avg_r = deque(maxlen=50)
 
     buffer = Rollout_Memory()
-    ppo_agent = PPO(PPO_model(obs_dim, act_dim), 0.98, 0.8, 0.0, 1024, 4, 25, k_epochs=1)
+    ppo_agent = PPO(
+        PPO_model(obs_dim, act_dim),
+        gamma=0.95,
+        lmbda=0.8,
+        ent_coeff=0.00,
+        batch_size=256,
+        verbose=25,
+        learning_rate=1e-3,
+        k_epochs=20)
 
     s_t = env.reset()
     for i in range(1, 5000):
@@ -127,7 +133,8 @@ def main():
         while buffer.qty < ppo_agent.n_steps:
             a_t, a_pi = ppo_agent.select_action(s_t)
             s_tp1, r, d, info = env.step(a_t)
-            #[buffer.push(s_t[i], a_t[i], r[i], a_pi[i], d[i]) for i in range(num_envs)]
+
+            #for i in range(num_envs): buffer.push(s_t[i], a_t[i], r[i], a_pi[i], d[i])
             buffer.push(s_t, a_t, r, a_pi, d)
 
             s_t = s_tp1
@@ -139,10 +146,9 @@ def main():
                 break
 
         if not d:
-            r_trajectory = ppo_agent.network(torch.from_numpy(s_tp1).float())[0]
+            r_trajectory = ppo_agent.network.critic(torch.from_numpy(s_tp1).float()).detach()
         
         data = buffer.pop_all()
-        #print(data[:-1], r_trajectory, '\n')
         ppo_agent.update(data, r_trajectory)
 
 if __name__ == "__main__":
