@@ -36,6 +36,11 @@ class PPO_cont:
         self.clip_range = clip_range
         self.max_grad_norm = max_grad_norm
         self.k_epochs = k_epochs
+        self.global_std = 0.5
+
+        #KL divergence
+        self.use_kl = False
+        self.target_kl = 0.03
 
     def calc_gae(self, s_r, r_r, d_r, final_r): #Still need to understand!
         gae_returns = torch.zeros_like(r_r)
@@ -66,7 +71,7 @@ class PPO_cont:
 
         indxs = np.arange(len)
 
-        for epoch in range(self.k_epochs):
+        for _ in range(self.k_epochs):
             np.random.shuffle(indxs)
 
             for iter in range(0, len, self.batch_size):  
@@ -74,19 +79,28 @@ class PPO_cont:
                 mb_indxs = indxs[iter:iter_end]
 
                 #new outputs
-                new_v = self.network.critic(s_r[mb_indxs])
+                new_v, new_mu = self.network(s_r[mb_indxs])
+                #new_std = torch.exp(self.network.action_log_std.expand_as(new_mu))
+                new_std = self.global_std
 
                 #critic
                 critic_loss = F.mse_loss(Q_rollout[mb_indxs], new_v.squeeze(-1))
 
                 #actor
-                new_dist = self.network.get_dist(s_r[mb_indxs])
-                log_probs = new_dist.log_prob(a_r[mb_indxs]).sum(-1)
+                new_dist = Normal(new_mu, new_std)
+                log_probs = new_dist.log_prob(a_r[mb_indxs])
                 entropy = new_dist.entropy().mean()   #ppo entropy loss
                 
                 adv = (Q_rollout[mb_indxs] - V_rollout[mb_indxs]).detach()
 
-                ratio = torch.exp(log_probs - old_probs[mb_indxs].squeeze())   #ppo policy loss function
+                log_ratio = log_probs - old_probs[mb_indxs].squeeze()
+                ratio = log_ratio.exp()   #ppo policy loss function
+
+                with torch.no_grad():
+                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                    old_approx_kl = (-log_ratio).mean()
+                    approx_kl = ((ratio - 1) - log_ratio).mean()
+
                 clipped_ratio = torch.clamp(ratio, 1-self.clip_range, 1+self.clip_range)
                 actor_loss = -(torch.min(ratio * adv, clipped_ratio * adv)).mean()
 
@@ -96,16 +110,20 @@ class PPO_cont:
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.max_grad_norm) #ppo gradient clipping
                 self.optimizer.step()
+            
+            if self.use_kl == True:
+                if approx_kl > self.target_kl:
+                    break
 
-            return loss
-        
+        return loss
+            
     def select_action(self, s):
-        dist = self.network.get_dist(torch.from_numpy(s).float())
-        a = dist.sample().float()
-        a = torch.clamp(a, -1, 1)
+        #dist = self.network.get_dist(torch.from_numpy(s).float())
+        _, mean = self.network(torch.from_numpy(s).float())
+        dist = Normal(mean, self.global_std)
+        a = dist.sample().float().clamp(-1, 1)
         a_log_prob = dist.log_prob(a)
-        return a.detach().numpy(), a_log_prob
-
+        return a.detach().numpy(), a_log_prob.detach()
 
 def main():
     #env_name = "LunarLanderContinuous-v2"
@@ -113,17 +131,16 @@ def main():
     env = RecordEpisodeStatistics(gym.make(env_name))
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.shape[0]
-    avg_r = deque(maxlen=50)
+    avg_r = deque(maxlen=40)
 
     buffer = Rollout_Memory()
     ppo_agent = PPO_cont(
         PPO_cont_model(obs_dim, act_dim),
-        gamma=0.999,
-        lmbda=0.98,
-        ent_coeff=0.01,
-        batch_size=64,
-        verbose=25,
-        learning_rate=3e-4,
+        gamma=0.95,
+        lmbda=0.8,
+        batch_size=256,
+        ent_coeff=0.1,
+        learning_rate=1e-3,
         k_epochs=4)
 
     s_t = env.reset()

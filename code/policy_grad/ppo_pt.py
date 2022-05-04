@@ -37,6 +37,10 @@ class PPO:
         self.max_grad_norm = max_grad_norm
         self.k_epochs = k_epochs
 
+        #KL divergence
+        self.use_kl = True
+        self.target_kl = 0.03
+
     def calc_gae(self, s_r, r_r, d_r, final_r): #Still need to understand!
         gae_returns = torch.zeros_like(r_r)
         gae = 0
@@ -66,7 +70,7 @@ class PPO:
 
         indxs = np.arange(len)
 
-        for epoch in range(self.k_epochs):
+        for _ in range(self.k_epochs):
             np.random.shuffle(indxs)
 
             for iter in range(0, len, self.batch_size):  
@@ -86,7 +90,15 @@ class PPO:
                 
                 adv = Q_rollout[mb_indxs] - V_rollout[mb_indxs].detach()
 
-                ratio = torch.exp(log_probs - old_probs[mb_indxs])   #ppo policy loss function
+                #ratio = torch.exp(log_probs - old_probs[mb_indxs])   #ppo policy loss function
+
+                log_ratio = log_probs - old_probs[mb_indxs].squeeze()
+                ratio = log_ratio.exp()   #ppo policy loss function
+
+                with torch.no_grad():
+                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
+                    approx_kl = ((ratio - 1) - log_ratio).mean()
+
                 clipped_ratio = torch.clamp(ratio, 1-self.clip_range, 1+self.clip_range)
                 actor_loss = -(torch.min(ratio * adv, clipped_ratio * adv)).mean()
 
@@ -97,7 +109,11 @@ class PPO:
                 torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.max_grad_norm) #ppo gradient clipping
                 self.optimizer.step()
 
-            return loss
+            if self.use_kl:
+                if approx_kl > self.target_kl:
+                    break
+
+        return loss
         
     def select_action(self, s):
         a_policy = self.network.actor(torch.from_numpy(s).float())

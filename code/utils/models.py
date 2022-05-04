@@ -123,6 +123,11 @@ class Q_duelling(nn.Module):
 		a = self.adv(q)
 		return v + (a - a.mean())
 
+	def get_rel_adv(self, state):
+		q = F.relu(self.l1(state))
+		a = self.adv(q)
+		return (a - a.mean())
+
 class PPO_model(torch.nn.Module):
     def __init__(self, input_size, action_size):
         super(PPO_model, self).__init__()
@@ -147,13 +152,19 @@ class PPO_cont_model(torch.nn.Module):
 		super(PPO_cont_model, self).__init__()
 
 		self.critic = torch.nn.Sequential(
-			nn.Linear(input_size, 256),
-			nn.Linear(256, 1)
+			nn.Linear(input_size, 64),
+			nn.Tanh(),
+			nn.Linear(64, 64),
+			nn.Tanh(),
+			nn.Linear(64, 1)
 		)
 		self.mu = torch.nn.Sequential(
-			nn.Linear(input_size, 256),
-			nn.Linear(256, action_size),
-			nn.Softmax(dim=-1)
+			nn.Linear(input_size, 64),
+			nn.Tanh(),
+			nn.Linear(64, 64),
+			nn.Tanh(),
+			nn.Linear(64, action_size)#,
+			#nn.Softmax(dim=-1)
 		)
 		self.action_log_std = nn.Parameter(torch.ones(action_size))
 
