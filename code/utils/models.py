@@ -1,7 +1,8 @@
+from email import policy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Normal
+from torch.distributions import Normal, Categorical
 
 class td3_Actor(nn.Module):
 	def __init__(self, state_dim, action_dim, max_action):
@@ -129,53 +130,54 @@ class Q_duelling(nn.Module):
 		return (a - a.mean())
 
 class PPO_model(torch.nn.Module):
-    def __init__(self, input_size, action_size):
-        super(PPO_model, self).__init__()
+	def __init__(self, input_size, action_size, net_size=256):
+		super(PPO_model, self).__init__()
         
-        self.critic = torch.nn.Sequential(
-            nn.Linear(input_size, 256),
-            nn.Linear(256, 1)
-        )
-        self.actor = torch.nn.Sequential(
-            nn.Linear(input_size, 256),
-            nn.Linear(256, action_size),
-            nn.Softmax(dim=-1)
-        )
-
-    def forward(self, s):
-        v = self.critic(s)
-        pi = self.actor(s)
-        return v, pi
-
-class PPO_cont_model(torch.nn.Module):
-	def __init__(self, input_size, action_size):
-		super(PPO_cont_model, self).__init__()
-
 		self.critic = torch.nn.Sequential(
-			nn.Linear(input_size, 64),
+			nn.Linear(input_size, net_size),
 			nn.Tanh(),
-			nn.Linear(64, 64),
+			nn.Linear(net_size, 1))
+
+		self.actor = torch.nn.Sequential(
+			nn.Linear(input_size, net_size),
 			nn.Tanh(),
-			nn.Linear(64, 1)
-		)
-		self.mu = torch.nn.Sequential(
-			nn.Linear(input_size, 64),
-			nn.Tanh(),
-			nn.Linear(64, 64),
-			nn.Tanh(),
-			nn.Linear(64, action_size)#,
-			#nn.Softmax(dim=-1)
-		)
-		self.action_log_std = nn.Parameter(torch.ones(action_size))
+			nn.Linear(net_size, action_size),
+			nn.Softmax(dim=-1))
 
 	def forward(self, s):
 		v = self.critic(s)
-		mu = self.mu(s)
+		pi = self.actor(s)
+		return v, pi
+
+	def get_dist(self, s):
+		policy = self.actor(s)
+		dist = Categorical(policy)
+		return dist
+
+class PPO_cont_model(torch.nn.Module):
+	def __init__(self, input_size, action_size, net_size=256):
+		super(PPO_cont_model, self).__init__()
+
+		self.critic = torch.nn.Sequential(
+			nn.Linear(input_size, net_size),
+			nn.Tanh(),
+			nn.Linear(net_size, 1))
+
+		self.actor = torch.nn.Sequential(
+			nn.Linear(input_size, net_size),
+			nn.Tanh(),
+			nn.Linear(net_size, action_size))
+
+		self.log_std = nn.Parameter(torch.ones(action_size))
+
+	def forward(self, s):
+		v = self.critic(s)
+		mu = self.actor(s)
 		return v, mu
 
 	def get_dist(self, s):
-		mu = self.mu(s)
-		std = torch.exp(self.action_log_std.expand_as(mu))
+		mu = self.actor(s)
+		std = torch.exp(self.log_std.expand_as(mu))
 		dist = Normal(mu, std)
 		return dist
 

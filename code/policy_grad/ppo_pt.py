@@ -1,15 +1,14 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Categorical
 import numpy as np
 import gym
+from gym import spaces
 from collections import deque
 from gym.wrappers import RecordEpisodeStatistics
-from code.utils.models import PPO_model
+from code.utils.models import PPO_model, PPO_cont_model
 from code.utils.memory import Rollout_Memory
 
-#https://github.com/nikhilbarhate99/PPO-PyTorch/blob/master/PPO.py  shows off the ratios well
 class PPO:
     def __init__(
         self,
@@ -20,7 +19,7 @@ class PPO:
         n_steps=2048,
         batch_size=64,
         verbose=20,
-        learning_rate=2.5e-4,
+        learning_rate=3e-4,
         clip_range=0.2,
         max_grad_norm=0.5,
         k_epochs=10
@@ -48,25 +47,23 @@ class PPO:
             if t == len(r_r) - 1: 
                 v_tp1 = final_r
             else: 
-                v_tp1 = self.network(s_r[t+1])[0].squeeze(-1)
+                v_tp1 = self.network.critic(s_r[t+1]).squeeze(-1)
 
-            v_t = self.network(s_r[t])[0].squeeze(-1)
+            v_t = self.network.critic(s_r[t]).squeeze(-1)
             y = r_r[t] + v_tp1 * self.gamma * (1 - d_r[t])
             td = y - v_t
             gae = td + self.gamma * self.lmbda * gae * (1 - d_r[t])
 
             gae_returns[t] = gae + v_t
 
-        return gae_returns
+        return gae_returns.detach()
 
     def update(self, data, r_traj):
-        s_r, a_r, r_r, pi_r, d_r, len = data
+        s_r, a_r, r_r, old_probs, d_r, len = data
         
-        Q_rollout = self.calc_gae(s_r, r_r, d_r, r_traj).detach()
+        Q_rollout = self.calc_gae(s_r, r_r, d_r, r_traj)
 
-        V_rollout = self.network(s_r.float())[0]
-
-        old_probs = pi_r.detach()
+        V_rollout = self.network.critic(s_r)
 
         indxs = np.arange(len)
 
@@ -78,19 +75,17 @@ class PPO:
                 mb_indxs = indxs[iter:iter_end]
 
                 #new outputs
-                new_v, new_pi = self.network(s_r[mb_indxs])
+                new_v = self.network.critic(s_r[mb_indxs])
 
                 #critic
                 critic_loss = F.mse_loss(Q_rollout[mb_indxs], new_v.squeeze(-1))
 
                 #actor
-                new_dist = Categorical(new_pi)
+                new_dist = self.network.get_dist(s_r[mb_indxs])
                 log_probs = new_dist.log_prob(a_r[mb_indxs])
                 entropy = new_dist.entropy().mean()   #ppo entropy loss
                 
                 adv = Q_rollout[mb_indxs] - V_rollout[mb_indxs].detach()
-
-                #ratio = torch.exp(log_probs - old_probs[mb_indxs])   #ppo policy loss function
 
                 log_ratio = log_probs - old_probs[mb_indxs].squeeze()
                 ratio = log_ratio.exp()   #ppo policy loss function
@@ -111,47 +106,44 @@ class PPO:
 
             if self.use_kl:
                 if approx_kl > self.target_kl:
-                    break
+                    #stopping early
+                    return loss
 
         return loss
         
     def select_action(self, s):
-        a_policy = self.network.actor(torch.from_numpy(s).float())
-        dist = Categorical(a_policy)
-        a = dist.sample().detach()
-        a_log_prob = dist.log_prob(a)
-        return a.numpy(), a_log_prob #, a_policy
+        a_policy = self.network.get_dist(torch.from_numpy(s).float())
+        a = a_policy.sample().clamp(-1, 1)  #for cartpole continuous
+        a_log_prob = a_policy.log_prob(a)
+        return a.detach().numpy(), a_log_prob.detach()
 
 def main():
     env_name = "CartPole-v1"
-    #env_name = "LunarLander-v2"
-    num_envs = 1
-    #env = RecordEpisodeStatistics(gym.vector.make(env_name, num_envs=num_envs))
+    #env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
     env = RecordEpisodeStatistics(gym.make(env_name))
     obs_dim = env.observation_space.shape[0]
-    act_dim = env.action_space.n
+    try:
+        act_dim = env.action_space.n
+    except:
+        act_dim = env.action_space.shape[0]
+
     avg_r = deque(maxlen=50)
 
+    if isinstance(env.action_space, spaces.Discrete):
+        model = PPO_model(obs_dim, act_dim, net_size=64)
+    else:
+        model = PPO_cont_model(obs_dim, act_dim, net_size=64)
+
     buffer = Rollout_Memory()
-    ppo_agent = PPO(
-        PPO_model(obs_dim, act_dim),
-        gamma=0.95,
-        lmbda=0.8,
-        ent_coeff=0.00,
-        batch_size=256,
-        verbose=25,
-        learning_rate=1e-3,
-        k_epochs=20)
+    ppo_agent = PPO(model)
 
     s_t = env.reset()
     for i in range(1, 5000):
         r_trajectory = 0
         while buffer.qty < ppo_agent.n_steps:
-            a_t, a_pi = ppo_agent.select_action(s_t)
+            a_t, a_logpi = ppo_agent.select_action(s_t)
             s_tp1, r, d, info = env.step(a_t)
-
-            #for i in range(num_envs): buffer.push(s_t[i], a_t[i], r[i], a_pi[i], d[i])
-            buffer.push(s_t, a_t, r, a_pi, d)
+            buffer.push(s_t, a_t, r, a_logpi, d)
 
             s_t = s_tp1
             if d:
@@ -168,6 +160,5 @@ def main():
         ppo_agent.update(data, r_trajectory)
 
 if __name__ == "__main__":
-    # stuff only to run when not called via 'import' here
     main()
 
