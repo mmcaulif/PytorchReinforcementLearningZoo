@@ -1,8 +1,8 @@
-from email import policy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal, Categorical
+import numpy as np
 
 class td3_Actor(nn.Module):
 	def __init__(self, state_dim, action_dim, max_action):
@@ -150,35 +150,40 @@ class PPO_model(torch.nn.Module):
 		return v, pi
 
 	def get_dist(self, s):
-		policy = self.actor(s)
-		dist = Categorical(policy)
-		return dist
+		return Categorical(self.actor(s))
 
 class PPO_cont_model(torch.nn.Module):
 	def __init__(self, input_size, action_size, net_size=256):
 		super(PPO_cont_model, self).__init__()
 
-		self.critic = torch.nn.Sequential(
+		self.critic = nn.Sequential(
 			nn.Linear(input_size, net_size),
 			nn.Tanh(),
 			nn.Linear(net_size, 1))
 
-		self.actor = torch.nn.Sequential(
+		self.actor = nn.Sequential(
 			nn.Linear(input_size, net_size),
 			nn.Tanh(),
-			nn.Linear(net_size, action_size))
+			nn.Linear(net_size, net_size)
+		)
 
-		self.log_std = nn.Parameter(torch.ones(action_size))
+		self.mu_head = nn.Linear(net_size, action_size)
+		self.mu_head.weight.data.mul_(0.1)
+		self.mu_head.bias.data.mul_(0.0)
 
-	def forward(self, s):
-		v = self.critic(s)
-		mu = self.actor(s)
-		return v, mu
+		self.action_log_std = nn.Parameter(torch.zeros(action_size))
 
-	def get_dist(self, s):
-		mu = self.actor(s)
-		std = torch.exp(self.log_std.expand_as(mu))
-		dist = Normal(mu, std)
+	#def forward(self, s):
+	#	v = self.critic(s)
+	#	mu = self.actor(s)
+	#	return v, mu
+
+	def get_dist(self,state):
+		mu = self.mu_head(self.actor(state))
+		action_log_std = self.action_log_std.expand_as(mu)
+		action_std = torch.exp(action_log_std)
+
+		dist = Normal(mu, action_std)
 		return dist
 
 class sac_Actor(nn.Module):
@@ -199,3 +204,35 @@ class sac_Actor(nn.Module):
         log_std = self.fc_std(state)
         log_std = torch.clamp(log_std, -5, 2)
         return mean, log_std
+
+class A2C_Model(torch.nn.Module):
+    def __init__(self, input_size, action_size):
+        super(A2C_Model, self).__init__()
+        
+        self.critic = torch.nn.Sequential(
+            nn.Linear(input_size, 256),
+            nn.Linear(256, 1)
+        )
+        self.actor = nn.Sequential(
+			nn.Linear(input_size, 256),
+			nn.Tanh(),
+		)
+
+        self.mu_head = nn.Linear(256, action_size)
+        self.mu_head.weight.data.mul_(0.1)
+        self.mu_head.bias.data.mul_(0.0)
+
+        self.action_log_std = nn.Parameter(torch.zeros(action_size))
+
+    def forward(self, s):
+        v = self.critic(s)
+        mu = self.mu_head(self.actor(s))
+        action_log_std = self.action_log_std.expand_as(mu)
+        action_std = torch.exp(action_log_std)
+        return v, (mu, action_std)
+
+    def get_dist(self, s):
+        mu = self.mu_head(self.actor(s))
+        action_log_std = self.action_log_std.expand_as(mu)
+        action_std = torch.exp(action_log_std)
+        return Normal(mu, action_std)
