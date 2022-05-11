@@ -3,45 +3,58 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 import gym
-from gym import spaces
 from collections import deque
 from gym.wrappers import RecordEpisodeStatistics
-from code.utils.models import PPO_model, PPO_cont_model
-from code.utils.memory import Rollout_Memory
+from PytorchContinousRL.code.utils.models import A2C_Model
+from PytorchContinousRL.code.utils.memory import Rollout_Memory
 
-class PPO:
+class PPO():
     def __init__(
         self,
         network,
         gamma=0.99,
         lmbda=0.95,
         ent_coeff=0.1,
+        critic_coeff=0.5,
         n_steps=2048,
         batch_size=64,
-        verbose=20,
+        verbose=500,
         learning_rate=3e-4,
         clip_range=0.2,
         max_grad_norm=0.5,
-        k_epochs=10
+        k_epochs=10,
+        target_kl=0.03
     ):
         self.network = network
         self.gamma = gamma
         self.lmbda = lmbda
         self.ent_coeff = ent_coeff
+        self.critic_coeff = critic_coeff
         self.n_steps = n_steps
         self.batch_size = batch_size
         self.verbose = verbose
-        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate, eps=1e-5)   #ppo optimiser
+        self.optimizer = torch.optim.Adam(self.network.parameters(), lr=learning_rate, eps=1e-5)
         self.clip_range = clip_range
         self.max_grad_norm = max_grad_norm
         self.k_epochs = k_epochs
+        self.target_kl = target_kl
 
-        #KL divergence
-        self.use_kl = True
-        self.target_kl = 0.03
+    def select_action(self, s):
+        dist = self.network.get_dist(torch.from_numpy(s).float())
+        a_t = dist.sample()
+        return a_t.numpy(), dist.log_prob(a_t)
+
+    def calc_returns(self, r_rollout, final_r):
+        discounted_r = torch.zeros_like(r_rollout)
+        for t in reversed(range(len(r_rollout))):
+            final_r = final_r *  self.gamma + r_rollout[t]
+            discounted_r[t] = final_r
+        return discounted_r.detach()
 
     def calc_gae(self, s_r, r_r, d_r, final_r): #Still need to understand!
         gae_returns = torch.zeros_like(r_r)
+        advantages = torch.zeros_like(r_r)
+        v_t = torch.zeros_like(r_r)
         gae = 0
         for t in reversed(range(len(r_r))):
             if t == len(r_r) - 1: 
@@ -49,116 +62,107 @@ class PPO:
             else: 
                 v_tp1 = self.network.critic(s_r[t+1]).squeeze(-1)
 
-            v_t = self.network.critic(s_r[t]).squeeze(-1)
+            v_t[t] = self.network.critic(s_r[t]).squeeze(-1)
             y = r_r[t] + v_tp1 * self.gamma * (1 - d_r[t])
-            td = y - v_t
-            gae = td + self.gamma * self.lmbda * gae * (1 - d_r[t])
+            td = y - v_t[t]
+            advantages[t] = gae = td + self.gamma * self.lmbda * gae * (1 - d_r[t])
 
-            gae_returns[t] = gae + v_t
+        gae_returns = advantages + v_t
 
-        return gae_returns.detach()
+        return gae_returns.detach(), advantages.detach()
 
-    def update(self, data, r_traj):
-        s_r, a_r, r_r, old_probs, d_r, len = data
+    def update(self, batch, r_traj):
+        s_rollout, a_rollout, r_rollout, old_probs, dones, len = batch
         
-        Q_rollout = self.calc_gae(s_r, r_r, d_r, r_traj)
-
-        V_rollout = self.network.critic(s_r)
-
         indxs = np.arange(len)
+        
+        Q_rollout, adv_rollout = self.calc_gae(s_rollout, r_rollout, dones, r_traj)
 
         for _ in range(self.k_epochs):
             np.random.shuffle(indxs)
 
             for iter in range(0, len, self.batch_size):  
                 iter_end = iter + self.batch_size
-                mb_indxs = indxs[iter:iter_end]
+                idx = indxs[iter:iter_end]
 
-                #new outputs
-                new_v = self.network.critic(s_r[mb_indxs])
-
-                #critic
-                critic_loss = F.mse_loss(Q_rollout[mb_indxs], new_v.squeeze(-1))
-
-                #actor
-                new_dist = self.network.get_dist(s_r[mb_indxs])
-                log_probs = new_dist.log_prob(a_r[mb_indxs])
-                entropy = new_dist.entropy().mean()   #ppo entropy loss
+                V = self.network.critic(s_rollout[idx].float())
+                critic_loss = F.mse_loss(Q_rollout[idx], V.squeeze(-1))    
                 
-                adv = Q_rollout[mb_indxs] - V_rollout[mb_indxs].detach()
+                dist_rollout = self.network.get_dist(s_rollout[idx].float())
+                new_probs = dist_rollout.log_prob(a_rollout[idx]).sum(-1)
+                
+                #print(new_probs.size(), old_probs[idx].size())
 
-                log_ratio = log_probs - old_probs[mb_indxs].squeeze()
-                ratio = log_ratio.exp()   #ppo policy loss function
+                log_ratio = (new_probs - old_probs[idx].sum(-1).detach())
+                ratio = log_ratio.exp()
 
                 with torch.no_grad():
-                    # calculate approx_kl http://joschu.net/blog/kl-approx.html
                     approx_kl = ((ratio - 1) - log_ratio).mean()
+
+                entropy = dist_rollout.entropy().mean()
+                adv = adv_rollout[idx].detach()
 
                 clipped_ratio = torch.clamp(ratio, 1-self.clip_range, 1+self.clip_range)
                 actor_loss = -(torch.min(ratio * adv, clipped_ratio * adv)).mean()
 
-                loss = actor_loss + (critic_loss * 0.5) - (entropy * self.ent_coeff)
+                loss = actor_loss + (critic_loss * self.critic_coeff) - (entropy * self.ent_coeff)
 
                 self.optimizer.zero_grad()
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.max_grad_norm) #ppo gradient clipping
+                torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
-            if self.use_kl:
-                if approx_kl > self.target_kl:
-                    #stopping early
-                    return loss
-
-        return loss
-        
-    def select_action(self, s):
-        a_policy = self.network.get_dist(torch.from_numpy(s).float())
-        a = a_policy.sample().clamp(-1, 1)  #for cartpole continuous
-        a_log_prob = a_policy.log_prob(a)
-        return a.detach().numpy(), a_log_prob.detach()
+            if approx_kl > self.target_kl:
+                #stopping early
+                return loss
 
 def main():
-    env_name = "CartPole-v1"
-    #env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
+    env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
+    #env_name = 'CartPole-v0'
     env = RecordEpisodeStatistics(gym.make(env_name))
+
     obs_dim = env.observation_space.shape[0]
-    try:
-        act_dim = env.action_space.n
-    except:
-        act_dim = env.action_space.shape[0]
+    act_dim = env.action_space.shape[0]
 
-    avg_r = deque(maxlen=50)
-
-    if isinstance(env.action_space, spaces.Discrete):
-        model = PPO_model(obs_dim, act_dim, net_size=64)
-    else:
-        model = PPO_cont_model(obs_dim, act_dim, net_size=64)
+    a2c_agent = PPO(
+        A2C_Model(obs_dim, act_dim),
+        n_steps=256,
+        batch_size=16,
+        k_epochs=4)
 
     buffer = Rollout_Memory()
-    ppo_agent = PPO(model)
+
+    avg_r = deque(maxlen=20)
+    count = 0
 
     s_t = env.reset()
-    for i in range(1, 5000):
-        r_trajectory = 0
-        while buffer.qty < ppo_agent.n_steps:
-            a_t, a_logpi = ppo_agent.select_action(s_t)
-            s_tp1, r, d, info = env.step(a_t)
-            buffer.push(s_t, a_t, r, a_logpi, d)
 
-            s_t = s_tp1
-            if d:
+    for i in range(50000):
+        a_t, a_log = a2c_agent.select_action(s_t)
+        s_tp1, r_t, done, info = env.step(a_t)
+        buffer.push(s_t, a_t, r_t, a_log, done)
+        s_t = s_tp1
+
+        if done or buffer.qty == a2c_agent.n_steps:
+            r_trajectory = 0
+            if not done:
+                r_trajectory = a2c_agent.network.critic(torch.from_numpy(s_tp1).float())  
+
+            rollout = buffer.pop_all()
+            a2c_agent.update(rollout, r_trajectory)     
+
+            if done:
+                count += 1
                 s_t = env.reset()
                 avg_r.append(int(info["episode"]["r"]))
-                if i % ppo_agent.verbose == 0:
-                    print(f'Episode: {i} | Average reward: {sum(avg_r)/len(avg_r)} | [{len(avg_r)}]')
-                break
+                #break
 
-        if not d:
-            r_trajectory = ppo_agent.network.critic(torch.from_numpy(s_tp1).float()).detach()
-        
-        data = buffer.pop_all()
-        ppo_agent.update(data, r_trajectory)
-
+        if i % a2c_agent.verbose == 0 and i > 0:
+            #avg_r = sum(episodic_rewards)/len(episodic_rewards)
+            print(f'Episode: {count} | Average reward: {sum(avg_r)/len(avg_r)} | Timesteps: {i} | [{len(avg_r)}]')
+                
 if __name__ == "__main__":
-    main()
+   main()
+
+    
 
