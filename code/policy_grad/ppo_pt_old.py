@@ -7,8 +7,8 @@ import gym
 from gym import spaces
 from collections import deque
 from gym.wrappers import RecordEpisodeStatistics
-from PytorchContinousRL.code.utils.models import PPO_model, PPO_cont_model, A2C_Model
-from PytorchContinousRL.code.utils.memory import Rollout_Memory
+from PytorchContinuousRL.code.utils.models import PPO_model, PPO_cont_model, A2C_Model
+from PytorchContinuousRL.code.utils.memory import Rollout_Memory
 
 class PPO:
     def __init__(
