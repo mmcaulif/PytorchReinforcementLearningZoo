@@ -211,6 +211,9 @@ class A2C_Model(torch.nn.Module):
         
         self.critic = torch.nn.Sequential(
             nn.Linear(input_size, 256),
+			nn.Tanh(),
+            nn.Linear(256, 256),
+			nn.Tanh(),
             nn.Linear(256, 1)
         )
         self.actor = nn.Sequential(

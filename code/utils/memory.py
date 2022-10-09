@@ -29,6 +29,28 @@ class Rollout_Memory(object):
         
         return states, actions, rewards, policies, dones, qty
 
+class Aux_Memory(object):
+
+    def __init__(self):
+        self.states, self.target_val, self.old_val = [], [], []
+        self.qty = 0
+    
+    def push(self, state, target_val, old_val):
+        self.states.append(state)
+        self.target_val.append(target_val)
+        self.old_val.append(old_val)
+        self.qty += 1
+    
+    def pop_all(self):
+        states = self.states[0]
+        target_val = self.target_val[0]
+        old_val = self.old_val[0]
+        qty = self.qty
+        
+        self.states, self.target_val, self.old_val = [], [], []
+        self.qty = 0
+        
+        return states, target_val, old_val, qty
 
 class Transition(NamedTuple):
     s: list  # state
