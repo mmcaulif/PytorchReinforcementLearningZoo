@@ -106,7 +106,7 @@ class TD3():
         return a
 
     def act(self, s):
-        a = self.select_action(torch.from_numpy(s).float())[0].detach().numpy()
+        a = self.select_action(torch.from_numpy(s).float()).detach().numpy()
         return a
 
 def main():
