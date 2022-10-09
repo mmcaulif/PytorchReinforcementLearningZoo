@@ -23,7 +23,7 @@ class PPO():
         clip_range=0.2,
         max_grad_norm=0.5,
         k_epochs=10,
-        target_kl=0.03
+        target_kl=None
     ):
         self.network = network.cuda()
         self.gamma = gamma
@@ -42,7 +42,6 @@ class PPO():
     def select_action(self, s):
         dist = self.network.get_dist(torch.from_numpy(s).float().cuda())
         a_t = dist.sample()
-        #print(dist.device, a_t.device)
         return a_t.cpu().numpy(), dist.log_prob(a_t).cpu()
 
     def calc_returns(self, r_rollout, final_r):
@@ -118,9 +117,20 @@ class PPO():
                 torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
-            if approx_kl > self.target_kl:
-                #stopping early
-                return loss
+            ### stopping early ###
+            if self.target_kl is not None:
+                if approx_kl > self.target_kl:
+                    break
+
+        return loss
+
+    def save_model(self, path):
+        torch.save(self.network.state_dict(), path)
+        return True
+
+    def load_model(self, path):
+        self.network.load_state_dict(torch.load(path))
+        return True
 
 def main():
     env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
