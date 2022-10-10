@@ -18,9 +18,9 @@ class td3_Actor(nn.Module):
 		a = torch.tanh(self.l3(a))
 		return torch.mul(a, self.max_action)
 
-class td3_Critic(nn.Module):
+class twinq_Critic(nn.Module):
 	def __init__(self, state_dim, action_dim):
-		super(td3_Critic, self).__init__()
+		super(twinq_Critic, self).__init__()
 
 		self.l1 = nn.Linear(state_dim + action_dim, 400)
 		self.l2 = nn.Linear(400, 300)
