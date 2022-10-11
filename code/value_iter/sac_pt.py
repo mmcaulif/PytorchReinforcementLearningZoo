@@ -10,7 +10,7 @@ import numpy as np
 import gym
 from gym.wrappers import RecordEpisodeStatistics
 
-from PytorchContinuousRL.code.utils.models import td3_Critic, sac_Actor
+from PytorchContinuousRL.code.utils.models import twinq_Critic, sac_Actor
 from PytorchContinuousRL.code.utils.memory import Transition
 
 class SAC():
@@ -82,8 +82,8 @@ class SAC():
 
         #delayed Actor update
         if i % self.policy_delay == 0:
-            a_p, log_pi, _ = self.select_action(s)
-            policy_loss = -(self.critic.q1_forward(s, a_p) - (log_pi * self.alpha)).mean()
+            a_pi, log_pi, _ = self.select_action(s)
+            policy_loss = -(self.critic.q1_forward(s, a_pi) - (log_pi * self.alpha)).mean()
 
             self.actor_optimizer.zero_grad()
             policy_loss.backward()
@@ -127,7 +127,6 @@ class SAC():
         return True
 
 def main():
-
     #env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
     env_name = 'MountainCarContinuous-v0'
     env = gym.make(env_name)
@@ -139,11 +138,10 @@ def main():
 
     sac_agent = SAC(environment=env,    #taken from sb3 zoo
         actor=sac_Actor(2,1).cuda(),
-        critic=td3_Critic(2,1).cuda(),
+        critic=twinq_Critic(2,1).cuda(),
         lr=1e-3,
         tau=7.3e-4,
         train_after=1000,
-        gamma=0.99,
         verbose=2000)
 
     replay_buffer = deque(maxlen=sac_agent.buffer_size)
