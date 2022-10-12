@@ -9,8 +9,8 @@ from torch.nn.utils import clip_grad_norm_
 from collections import deque
 import random
 
-from code.utils.models import td3_Actor, td3_Critic
-from code.utils.memory import Transition
+from PytorchContinuousRL.code.utils.models import td3_Actor, td3_Critic
+from PytorchContinuousRL.code.utils.memory import Transition
 
 class TD3():
     def __init__(self, 
@@ -53,11 +53,11 @@ class TD3():
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=lr)
 
     def update(self, batch, i):
-        s = torch.from_numpy(np.array(batch.s)).type(torch.float32)
-        a = torch.from_numpy(np.array(batch.a))
-        r = torch.FloatTensor(batch.r).unsqueeze(1)
-        s_p = torch.from_numpy(np.array(batch.s_p)).type(torch.float32)
-        d = torch.IntTensor(batch.d).unsqueeze(1)
+        s = torch.from_numpy(np.array(batch.s)).type(torch.float32).cuda()
+        a = torch.from_numpy(np.array(batch.a)).cuda()
+        r = torch.FloatTensor(batch.r).unsqueeze(1).cuda()
+        s_p = torch.from_numpy(np.array(batch.s_p)).type(torch.float32).cuda()
+        d = torch.IntTensor(batch.d).unsqueeze(1).cuda()
 
         #Critic update
         with torch.no_grad():
@@ -90,7 +90,7 @@ class TD3():
             for target_param, param in zip(self.actor_target.parameters(), self.actor.parameters()):
                 target_param.data.copy_(param.data * self.tau + target_param.data * (1.0 - self.tau))
 
-        return critic_loss    
+        return critic_loss.cpu() 
 
     def noisy_action(self, a_t, std_amnt):
         mean=torch.zeros_like(a_t)
@@ -98,12 +98,16 @@ class TD3():
         return (a_t + noise).clamp(self.act_low,self.act_high)
 
     def select_action(self, s):
-        a = self.actor(torch.from_numpy(s).float()).detach()
+        a = self.actor(s.cuda())
         if self.actor.training:
             a = self.noisy_action(a, self.action_noise)
         else:
             a = self.noisy_action(a, 0)
-        return a.numpy()
+        return a.cpu()
+
+    def act(self, s):
+        a = self.select_action(torch.from_numpy(s).float()).detach().numpy()
+        return a
 
 def main():
     #env_name = 'MountainCarContinuous-v0'

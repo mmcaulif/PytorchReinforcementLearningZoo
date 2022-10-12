@@ -1,32 +1,34 @@
+"""Soft actor critic agent"""
+import random
+import copy
+from collections import deque
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
 from torch.distributions import Normal
 import numpy as np
 import gym
-import copy
 from gym.wrappers import RecordEpisodeStatistics
-from collections import deque
-import random
 
-from code.utils.models import td3_Critic, sac_Actor
-from code.utils.memory import Transition
+from PytorchContinuousRL.code.utils.models import twinq_Critic, sac_Actor
+from PytorchContinuousRL.code.utils.memory import Transition
 
 class SAC():
-    def __init__(self, 
-        environment, 
+    """Class for SAC agent"""
+    def __init__(self,
+        environment,
         actor,
         critic,
         lr=3e-4,
-        buffer_size=1000000, 
-        batch_size=256, 
+        buffer_size=1000000,
+        batch_size=256,
         alpha=0.2,
-        tau=0.005, 
-        gamma=0.99, 
+        tau=0.005,
+        gamma=0.99,
         train_after=100,
         policy_delay=1,
-        verbose=500):
+        verbose=500,
+        idx=0):
 
         self.environment = environment
         self.buffer_size = buffer_size
@@ -47,6 +49,8 @@ class SAC():
         self.critic_target = copy.deepcopy(self.critic)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=lr)
 
+        self.idx = idx
+
         # action rescaling
         #print(self.act_high, self.act_low)
         self.action_scale = int((self.act_high - (self.act_low)) / 2.0)
@@ -54,11 +58,11 @@ class SAC():
         #print(self.action_scale, self.action_bias)
 
     def update(self, batch, i):
-        s = torch.from_numpy(np.array(batch.s)).type(torch.float32)
-        a = torch.from_numpy(np.array(batch.a))
-        r = torch.FloatTensor(batch.r).unsqueeze(1)
-        s_p = torch.from_numpy(np.array(batch.s_p)).type(torch.float32)
-        d = torch.IntTensor(batch.d).unsqueeze(1)
+        s = torch.from_numpy(np.array(batch.s)).float().cuda()
+        a = torch.from_numpy(np.array(batch.a)).cuda()
+        r = torch.FloatTensor(batch.r).unsqueeze(1).cuda()
+        s_p = torch.from_numpy(np.array(batch.s_p)).float().cuda()
+        d = torch.IntTensor(batch.d).unsqueeze(1).cuda()
 
         #Critic update
         with torch.no_grad():
@@ -78,8 +82,8 @@ class SAC():
 
         #delayed Actor update
         if i % self.policy_delay == 0:
-            a_p, log_pi, _ = self.select_action(s)
-            policy_loss = -(self.critic.q1_forward(s, a_p) - (log_pi * self.alpha)).mean()
+            a_pi, log_pi, _ = self.select_action(s)
+            policy_loss = -(self.critic.q1_forward(s, a_pi) - (log_pi * self.alpha)).mean()
 
             self.actor_optimizer.zero_grad()
             policy_loss.backward()
@@ -89,10 +93,10 @@ class SAC():
             for target_param, param in zip(self.critic_target.parameters(), self.critic.parameters()):
                 target_param.data.copy_(param.data * self.tau + target_param.data * (1.0 - self.tau))
 
-        return critic_loss
+        return critic_loss.cpu()
 
     def select_action(self, s):
-        mean, log_std = self.actor(s)
+        mean, log_std = self.actor(s.cuda())
         std = log_std.exp()
         dist = Normal(mean, std)
         x_t = dist.rsample()  # for reparameterization trick (mean + std * N(0,1))
@@ -107,12 +111,24 @@ class SAC():
         return action, log_prob, mean
 
     def act(self, s):
-        a = self.select_action(torch.from_numpy(s).float())[0].detach().numpy()
+        a = self.select_action(torch.from_numpy(s).float())[0].cpu().detach().numpy()
         return a
+
+    def save_model(self, i):
+        torch.save(self.critic.state_dict(), f'models/critic_{i + self.idx}')
+        torch.save(self.critic_target.state_dict(), f'models/critic_target_{i + self.idx}')
+        torch.save(self.actor.state_dict(), f'models/actor_{i + self.idx}')
+        return True
+
+    def load_model(self):
+        self.critic.load_state_dict(torch.load(f'models/critic_{self.idx}'))
+        self.critic_target.load_state_dict(torch.load(f'models/critic_target_{self.idx}'))
+        self.actor.load_state_dict(torch.load(f'models/actor_{self.idx}'))
+        return True
 
 def main():
     #env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
-    env_name = 'LunarLanderContinuous-v2'
+    env_name = 'MountainCarContinuous-v0'
     env = gym.make(env_name)
     env = RecordEpisodeStatistics(env)
 
@@ -121,13 +137,12 @@ def main():
     r_sum = 0
 
     sac_agent = SAC(environment=env,    #taken from sb3 zoo
-        actor=sac_Actor,
-        critic=td3_Critic,
+        actor=sac_Actor(2,1).cuda(),
+        critic=twinq_Critic(2,1).cuda(),
         lr=1e-3,
         tau=7.3e-4,
         train_after=1000,
-        gamma=0.99,
-        verbose=500)
+        verbose=2000)
 
     replay_buffer = deque(maxlen=sac_agent.buffer_size)
 

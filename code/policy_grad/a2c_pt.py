@@ -5,8 +5,8 @@ import numpy as np
 import gym
 from collections import deque
 from gym.wrappers import RecordEpisodeStatistics
-from PytorchContinousRL.code.utils.models import A2C_Model
-from PytorchContinousRL.code.utils.memory import Rollout_Memory
+from PytorchContinuousRL.code.utils.models import A2C_Model
+from PytorchContinuousRL.code.utils.memory import Rollout_Memory
 
 class A2C():
     def __init__(

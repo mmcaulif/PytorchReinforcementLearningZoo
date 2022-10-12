@@ -18,9 +18,9 @@ class td3_Actor(nn.Module):
 		a = torch.tanh(self.l3(a))
 		return torch.mul(a, self.max_action)
 
-class td3_Critic(nn.Module):
+class twinq_Critic(nn.Module):
 	def __init__(self, state_dim, action_dim):
-		super(td3_Critic, self).__init__()
+		super(twinq_Critic, self).__init__()
 
 		self.l1 = nn.Linear(state_dim + action_dim, 400)
 		self.l2 = nn.Linear(400, 300)
@@ -58,17 +58,21 @@ class td3_Critic(nn.Module):
 		q1 = self.l3(q1)
 		return q1
 
+def weights_init_(m):
+    # weight init helper function
+    if isinstance(m, nn.Linear):
+        torch.nn.init.xavier_uniform_(m.weight, gain=1)
+        torch.nn.init.constant_(m.bias, 0)
+
 class ddpg_Critic(nn.Module):
 	def __init__(self, state_dim, action_dim):
-		super(ddpg_Critic, self).__init__()
+		super(ddpg_Critic, self).__init__()	
 
-		self.critic = torch.nn.Sequential(
-            nn.Linear(state_dim + action_dim, 400),
-			nn.ReLU(),
-            nn.Linear(400, 300),
-			nn.ReLU(),
-			nn.Linear(300, 1)
-        )
+		self.l1 = nn.Linear(state_dim + action_dim, 400)
+		self.l2 = nn.Linear(400, 300)
+		self.l3 = nn.Linear(300, 1)
+
+		self.apply(weights_init_)
 
 	def forward(self, state, action):
 		try:
@@ -76,16 +80,9 @@ class ddpg_Critic(nn.Module):
 		except:	
 			sa = torch.cat([state, action], -1)
 
-		q = self.critic(sa)
-		return q, q
-
-	def q1_forward(self, state, action):
-		try:
-			sa = torch.cat([state, action], 1)
-		except:	
-			sa = torch.cat([state, action], -1)
-
-		q = self.critic(sa)
+		q = F.relu(self.l1(sa))
+		q = F.relu(self.l2(q))
+		q = self.l3(q)
 		return q
 
 class Q_val(nn.Module):
@@ -211,6 +208,9 @@ class A2C_Model(torch.nn.Module):
         
         self.critic = torch.nn.Sequential(
             nn.Linear(input_size, 256),
+			nn.Tanh(),
+            #nn.Linear(256, 256),
+			#nn.Tanh(),
             nn.Linear(256, 1)
         )
         self.actor = nn.Sequential(

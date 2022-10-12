@@ -5,8 +5,8 @@ import numpy as np
 import gym
 from collections import deque
 from gym.wrappers import RecordEpisodeStatistics
-from PytorchContinousRL.code.utils.models import A2C_Model
-from PytorchContinousRL.code.utils.memory import Rollout_Memory
+from PytorchContinuousRL.code.utils.models import A2C_Model
+from PytorchContinuousRL.code.utils.memory import Rollout_Memory
 
 class PPO():
     def __init__(
@@ -23,9 +23,9 @@ class PPO():
         clip_range=0.2,
         max_grad_norm=0.5,
         k_epochs=10,
-        target_kl=0.03
+        target_kl=None
     ):
-        self.network = network
+        self.network = network.cuda()
         self.gamma = gamma
         self.lmbda = lmbda
         self.ent_coeff = ent_coeff
@@ -40,9 +40,9 @@ class PPO():
         self.target_kl = target_kl
 
     def select_action(self, s):
-        dist = self.network.get_dist(torch.from_numpy(s).float())
+        dist = self.network.get_dist(torch.from_numpy(s).float().cuda())
         a_t = dist.sample()
-        return a_t.numpy(), dist.log_prob(a_t)
+        return a_t.cpu().numpy(), dist.log_prob(a_t).cpu()
 
     def calc_returns(self, r_rollout, final_r):
         discounted_r = torch.zeros_like(r_rollout)
@@ -60,9 +60,9 @@ class PPO():
             if t == len(r_r) - 1: 
                 v_tp1 = final_r
             else: 
-                v_tp1 = self.network.critic(s_r[t+1]).squeeze(-1)
+                v_tp1 = self.network.critic(s_r[t+1].cuda()).squeeze(-1)
 
-            v_t[t] = self.network.critic(s_r[t]).squeeze(-1)
+            v_t[t] = self.network.critic(s_r[t].cuda()).squeeze(-1)
             y = r_r[t] + v_tp1 * self.gamma * (1 - d_r[t])
             td = y - v_t[t]
             advantages[t] = gae = td + self.gamma * self.lmbda * gae * (1 - d_r[t])
@@ -73,6 +73,11 @@ class PPO():
 
     def update(self, batch, r_traj):
         s_rollout, a_rollout, r_rollout, old_probs, dones, len = batch
+        s_rollout = s_rollout.cuda()
+        a_rollout = a_rollout.cuda() 
+        r_rollout = r_rollout.cuda() 
+        old_probs = old_probs.cuda() 
+        dones = dones.cuda()
         
         indxs = np.arange(len)
         
@@ -85,10 +90,10 @@ class PPO():
                 iter_end = iter + self.batch_size
                 idx = indxs[iter:iter_end]
 
-                V = self.network.critic(s_rollout[idx].float())
+                V = self.network.critic(s_rollout[idx].float().cuda())
                 critic_loss = F.mse_loss(Q_rollout[idx], V.squeeze(-1))    
                 
-                dist_rollout = self.network.get_dist(s_rollout[idx].float())
+                dist_rollout = self.network.get_dist(s_rollout[idx].float().cuda())
                 new_probs = dist_rollout.log_prob(a_rollout[idx]).sum(-1)
                 
                 #print(new_probs.size(), old_probs[idx].size())
@@ -112,9 +117,20 @@ class PPO():
                 torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.max_grad_norm)
                 self.optimizer.step()
 
-            if approx_kl > self.target_kl:
-                #stopping early
-                return loss
+            ### stopping early ###
+            if self.target_kl is not None:
+                if approx_kl > self.target_kl:
+                    break
+
+        return loss
+
+    def save_model(self, path):
+        torch.save(self.network.state_dict(), path)
+        return True
+
+    def load_model(self, path):
+        self.network.load_state_dict(torch.load(path))
+        return True
 
 def main():
     env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
