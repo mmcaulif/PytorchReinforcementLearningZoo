@@ -11,8 +11,10 @@ from gym.wrappers import FrameStack
 from collections import deque
 import random
 
+import wandb
+
 from code.value_iter.sac_pt import SAC
-from code.utils.models import ddpg_Critic, sac_Actor
+from code.utils.models import td3_Critic, sac_Actor
 from code.utils.attacker import Attacker
 from code.fyp_algos.ciq_pt import Transition
 
@@ -176,6 +178,13 @@ def main():
     parser.add_argument("--vanilla", help="TD3 or TD3_ciq", action="store_true")
     args = parser.parse_args()
 
+    wandb.init(project="fyp-td3-ciq", entity="manusft")
+    wandb.config = {
+        "algo": 'SAC',
+        "vanilla": args.vanilla,
+        "P": args.probs
+        }
+
     env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
     env = gym.make(env_name)
     env = Attacker(env, p=args.probs)
@@ -187,6 +196,7 @@ def main():
     
     episodic_rewards = deque(maxlen=10)
     episodes = 0
+    LR = 2e-3
 
     """
     https://github.com/DLR-RM/rl-baselines3-zoo/blob/master/hyperparams/sac.yml
@@ -196,11 +206,12 @@ def main():
         print(f"Using vanilla sac with P: {args.probs}")
         sac_agent = SAC(environment=env,    #taken from sb3 zoo
             actor=sac_Actor(obs_dims, act_dims),
-            critic=encoder1_Critic(4, obs_dims, act_dims),
-            lr=1e-3,
+            #critic=encoder1_Critic(obs_dims, act_dims),
+            critic=td3_Critic(obs_dims, act_dims),
+            lr=LR,
             buffer_size=200000,
             train_after=10000,
-            #alpha=0.1
+            alpha=0.15
             )
     
     else:
@@ -208,10 +219,10 @@ def main():
         sac_agent = CIQ_SAC(environment=env,    #taken from sb3 zoo
             actor=sac_Actor(obs_dims, act_dims),
             critic=encoder2_Critic(4, obs_dims, act_dims),
-            lr=1e-3,
+            lr=LR,
             buffer_size=200000,
             train_after=10000,
-            #alpha=0.1
+            alpha=0.15
             )
 
     replay_buffer = deque(maxlen=sac_agent.buffer_size)
@@ -237,6 +248,8 @@ def main():
 
             if i % sac_agent.verbose == 0: 
                 avg_r = sum(episodic_rewards)/len(episodic_rewards)
+                wandb.log({f"Avg Reward with P={args.probs} (ciq agumented vs vanilla with encoder critic)": avg_r})                
+                #wandb.log({f"Avg Reward with P={args.probs}, lr={LR} (using encoder critic network and oracle loss)": avg_r})
                 print(f"Episodes: {episodes} | Timestep: {i} | Avg. Reward: {avg_r}, [{len(episodic_rewards)}]")
 
         if done:
@@ -249,7 +262,7 @@ def main():
         s_t = s_tp1
 
     #Render Trained agent
-    s_t = env.reset()
+    """s_t = env.reset()
     while True:
         env.render()
         a_t = sac_agent.act(s_t)
@@ -257,8 +270,8 @@ def main():
         if done:
             s_tp1 = env.reset()
 
-        s_t = s_tp1
+        s_t = s_tp1"""
 
 if __name__ == "__main__":
-   # stuff only to run when not called via 'import' here
-   main()
+    # stuff only to run when not called via 'import' here
+    main()
