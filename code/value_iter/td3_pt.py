@@ -9,7 +9,7 @@ from torch.nn.utils import clip_grad_norm_
 from collections import deque
 import random
 
-from PytorchContinuousRL.code.utils.models import td3_Actor, td3_Critic
+from PytorchContinuousRL.code.utils.models import td3_Actor, twinq_Critic
 from PytorchContinuousRL.code.utils.memory import Transition
 
 class TD3():
@@ -125,7 +125,7 @@ def main():
 
     td3_agent = TD3(environment=env,
         actor=td3_Actor(obs_dim, act_dim, env.action_space.high[0]),
-        critic=td3_Critic(obs_dim, act_dim), 
+        critic=twinq_Critic(obs_dim, act_dim), 
         lr=1e-3,
         tau=0.01,
         train_after=10000,

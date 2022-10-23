@@ -1,3 +1,4 @@
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,7 +6,7 @@ from torch.distributions import Normal, Categorical
 import numpy as np
 
 class td3_Actor(nn.Module):
-	def __init__(self, state_dim, action_dim, max_action):
+	def __init__(self, state_dim, action_dim, max_action=1):
 		super(td3_Actor, self).__init__()
 		self.l1 = nn.Linear(state_dim, 400)
 		self.l2 = nn.Linear(400, 300)

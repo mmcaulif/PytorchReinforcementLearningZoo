@@ -1,12 +1,10 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 import gym
 from collections import deque
 from gym.wrappers import RecordEpisodeStatistics
-from PytorchContinuousRL.code.utils.models import A2C_Model
-from PytorchContinuousRL.code.utils.memory import Rollout_Memory
+from code.utils.models import PPO_model
+from utils.memory import Rollout_Memory
 
 class A2C():
     def __init__(
@@ -63,13 +61,13 @@ class A2C():
         self.optimizer.step()
 
 def main():
-    env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'
+    env_name = 'CartPole-v0'
     env = RecordEpisodeStatistics(gym.make(env_name))
 
     obs_dim = env.observation_space.shape[0]
     act_dim = env.action_space.shape[0]
 
-    a2c_agent = A2C(A2C_Model(obs_dim, act_dim), gamma=0.9, ent_coeff=0.01)
+    a2c_agent = A2C(PPO_model(obs_dim, act_dim), gamma=0.9, ent_coeff=0.01)
     buffer = Rollout_Memory()
 
     avg_r = deque(maxlen=40)
