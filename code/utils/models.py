@@ -188,13 +188,13 @@ class sac_Actor(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(sac_Actor, self).__init__()
         self.fc = nn.Sequential(
-            nn.Linear(state_dim, 256),
+            nn.Linear(state_dim, 400),
             nn.ReLU(),
-            nn.Linear(256, 256),
+            nn.Linear(400, 300),
             nn.ReLU()
         )
-        self.fc_mean = nn.Linear(256, action_dim)
-        self.fc_std = nn.Linear(256, action_dim)
+        self.fc_mean = nn.Linear(300, action_dim)
+        self.fc_std = nn.Linear(300, action_dim)
 
     def forward(self, state):
         state = self.fc(state)
