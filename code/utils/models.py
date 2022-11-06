@@ -99,6 +99,21 @@ class Q_val(nn.Module):
 		q = self.l3(q)
 		return q
 
+class Q_dist(nn.Module):
+	def __init__(self, state_dim, action_dim, n_atoms):
+		super(Q_dist, self).__init__()
+		self.action_dim = action_dim
+		self.n_atoms = n_atoms
+		self.l1 = nn.Linear(state_dim, 64)
+		self.l2 = nn.Linear(64, 64)
+		self.l3 = nn.Linear(64, self.action_dim * n_atoms)
+
+	def forward(self, state):
+		q = F.relu(self.l1(state))
+		q = F.relu(self.l2(q))
+		q = self.l3(q).view(-1, self.action_dim, self.n_atoms)
+		return F.softmax(q, dim=-1)
+
 class Q_duelling(nn.Module):
 	def __init__(self, state_dim, action_dim):
 		super(Q_duelling, self).__init__()
