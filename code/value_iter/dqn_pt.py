@@ -54,14 +54,14 @@ class DQN():
         q = self.q_func(s).gather(1, a.long())
 
         with torch.no_grad():
-            q_p = torch.max(self.q_target(s_p), dim = 1).unsqueeze(1)
+            q_p = self.q_target(s_p).amax(dim = 1).unsqueeze(1)
             y = r + self.gamma * q_p * (1 - d)
             
         loss = F.mse_loss(q, y)
 
         self.optimizer.zero_grad()
         loss.backward()
-        clip_grad_norm_(self.q_func.parameters(), self.max_grad_norm)
+        torch.nn.utils.clip_grad_norm_(self.q_func.parameters(), self.max_grad_norm)
         self.optimizer.step()
 
         return loss

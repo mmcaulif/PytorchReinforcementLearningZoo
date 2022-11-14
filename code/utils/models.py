@@ -1,9 +1,7 @@
-import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal, Categorical
-import numpy as np
 
 class td3_Actor(nn.Module):
 	def __init__(self, state_dim, action_dim, max_action=1):

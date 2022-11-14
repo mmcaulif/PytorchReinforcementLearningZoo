@@ -2,11 +2,10 @@ import torch
 import numpy as np
 import gym
 import copy
-from collections import deque
 
-from code.utils.reward_logger import RewardLogger
-from code.utils.models import Q_quantregression
-from code.utils.memory import ReplayBuffer
+from ..utils.reward_logger import RewardLogger
+from ..utils.models import Q_quantregression
+from ..utils.memory import ReplayBuffer
 
 class QR_DQN:
     def __init__(
@@ -15,7 +14,7 @@ class QR_DQN:
         network,
         replay_buffer=ReplayBuffer,
         gamma=0.99,
-        train_after=50000,
+        learning_starts=50000,
         train_freq=4,
         target_update=1000,
         batch_size=64,
@@ -29,7 +28,7 @@ class QR_DQN:
         self.q_func = network
         self.q_target = copy.deepcopy(self.q_func)
         self.gamma = gamma
-        self.train_after = train_after
+        self.learning_starts = learning_starts
         self.train_freq = train_freq
         self.target_update = target_update
         self.batch_size = batch_size
@@ -88,19 +87,23 @@ class QR_DQN:
 
         return a
 
-    def train(self, train_steps, verbose=500):
-        logger = RewardLogger(report_freq=verbose)
+    def train(self, train_steps, report_freq=20):
+        logger = RewardLogger(report_freq=report_freq)
 
         # Training loop
         s_t = self.env.reset()
         for i in range(train_steps):
-            a_t = self.select_action(s_t)
+            if i > self.learning_starts:
+                a_t = self.select_action(s_t)
+            else:
+                a_t = self.env.action_space.sample()
+                
             s_tp1, r_t, done, _ = self.env.step(a_t)
             logger.log_step(r_t)
             self.replay_buffer.append(s_t, a_t, r_t, s_tp1, done)
             s_t = s_tp1
 
-            if len(self.replay_buffer) >= self.batch_size and i >= self.train_after:
+            if len(self.replay_buffer) >= self.batch_size and i >= self.learning_starts:
                 
                 if i % self.train_freq == 0:
                     batch = self.replay_buffer.sample(self.batch_size)
@@ -122,12 +125,12 @@ def main():
     c51_agent = QR_DQN(
         env,
         Q_quantregression,
-        train_after=250,
+        learning_starts=250,
         batch_size=256,
         target_update=300,
         learning_rate=2.3e-3,)
 
-    c51_agent.train(train_steps=100000, r_avg_len=20, verbose=2000)
+    c51_agent.train(train_steps=100000, r_avg_len=20, report_freq=2000)
 
 if __name__ == "__main__":
     # stuff only to run when not called via 'import' here

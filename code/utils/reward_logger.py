@@ -2,11 +2,11 @@ from collections import deque
 import matplotlib.pyplot as plt
 
 class MultiagentRewardLogger():
-    def __init__(self, agents, episode_avg=50, update_freq=25):
+    def __init__(self, agents, episode_avg=40, report_freq=20):
         # Logging variables
         self.agents = agents
         self.running_length = episode_avg
-        self.update_freq = update_freq
+        self.report_freq = report_freq
 
         # Metrics
         self.r_trajectory = {agent: 0 for agent in self.agents}
@@ -28,7 +28,7 @@ class MultiagentRewardLogger():
             self.r_plot[agent].append(round(sum(self.r_avg[agent])/len(self.r_avg[agent]), 2))
             self.r_trajectory[agent] = 0        
             
-        if self.episodes % self.update_freq == 0:
+        if self.report_freq is not None and self.episodes % self.report_freq == 0:
             print(f"EPISODE {self.episodes} DONE, AVERAGE EPISODIC REWARDS: {self.stats()}")
 
         pass
@@ -50,7 +50,7 @@ class MultiagentRewardLogger():
         pass
 
 class RewardLogger():
-    def __init__(self, episode_avg=20, report_freq=20):
+    def __init__(self, episode_avg=40, report_freq=20):
         # Logging variables
         self.running_length = episode_avg
         self.report_freq = report_freq
