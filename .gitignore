@@ -1,16 +1,3 @@
 code/wandb
-code/__pycache__
-code/gym-cartpole-continuous
-1509.02971.pdf
-1904.12901.pdf
-BAI Computer Engineering Final Year Project – Student Projects.URL
-Causal inference 4 Causal Diagrams, Markov Factorization, Structural Equation Models.URL
-Causal Reinforcement Learning - Chaochao Lu - YouTube.URL
-environment.txt
-Introduction to Causal RL – Chaochao Lu.URL
-mmcaulif - project summary.pdf
-project summary.rtf
-github links
-helpful links
-report
-td3 or sac.pdf
+*/__pycache__
+__pycache__

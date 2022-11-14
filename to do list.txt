@@ -1,13 +1,11 @@
--Maybe try implement them in new types of environments or in different action spaces
--Also try combine them
--Start on report and include references!
+New to do list:
 
--improve noise generator maybe?
+    Organisation:
+        -import multi agent stuff and reward tracer
+        -clean up library
+        -implement .train() method and reward logger for all algorithms
+        -reformat code with linting (flake/pep8)
 
-Presentation:
--compare LunarLanderContinuous for p = 0.1, 0.2, 0.3
--test on a new discrete environment
--get a graph showing evaluation performance for cartpole after 500,000 trainsteps with p=0.2
--propose other forms of noise/interference
--add references as footnotes
--as an end-game experiment, combine all the different forms of noise in an intense continous environment
+    Technical:
+        -implement IQL and VDN
+        -implement qr-ddpg and benchmark it vs regular ddpg
