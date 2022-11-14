@@ -1,16 +1,11 @@
-import yaml
-import sys
-import time
 import torch
 import torch.nn.functional as F
 import numpy as np
-from memory import ExperienceReplay
+#from .memory import ExperienceReplay
 from copy import deepcopy
-from ma_models import local_Actor, central_twinq_Critic
-from reward_logger import RewardLogger
 
-# environments
-from pettingzoo.mpe import simple_v2
+from ..utils.memory import ReplayBuffer as ExperienceReplay
+from ..utils.reward_logger import MultiagentRewardLogger
 
 class IQL():
     def __init__(
@@ -23,7 +18,8 @@ class IQL():
         batch_size=1024,
         tau=0.01,
         gamma=0.95,
-        update_every=100,
+        train_freq=100,
+        target_update=1000
     ) -> None:
         # Hyper-parameters
         self.env = environment
@@ -33,7 +29,8 @@ class IQL():
         self.batch_size = batch_size
         self.tau = tau
         self.gamma = gamma
-        self.update_every = update_every
+        self.train_freq = train_freq
+        self.target_update = target_update
 
         # Multiagent initialisation
         self.agents = self.env.possible_agents
@@ -46,7 +43,7 @@ class IQL():
 
         self.memory = {agent:ExperienceReplay(self.buffer_size) for agent in self.agents}
 
-        self.optim = {agent: torch.optim.Adam(self.critics[agent].parameters(), lr=lr) for agent in self.agents}
+        self.optim = {agent: torch.optim.Adam(self.q_funcs[agent].parameters(), lr=lr) for agent in self.agents}
 
     def __len__(
         self
@@ -61,7 +58,7 @@ class IQL():
         act_sum = 0
         obs_sum = 0
         for agent in self.agents:
-            act_dims[agent] = (self.env.action_space(agent).shape[0] - 1)
+            act_dims[agent] = (self.env.action_space(agent).n)
             obs_dims[agent] = self.env.observation_space(agent).shape[0]
             act_sum += act_dims[agent]
             obs_sum += obs_dims[agent]
@@ -76,23 +73,25 @@ class IQL():
 
     def update(
         self,
-        i
     ) -> None:
         s, a, r, s_p, d = self.multiagent_sample()
 
-        for agent in self.agents:            
-            ### Critic update
-            q_p = self.q_targets[agent](s_p).max().values
-            y = r[agent] + self.gamma * q_p * (1 - d[agent])
+        for agent in self.agents:
 
-            q = self.q_funcs[agent](s, a)
+            q = self.q_funcs[agent](s[agent]).gather(1, a[agent].unsqueeze(-1).long()).squeeze()
 
-            critic_loss = F.mse_loss(q, y.detach())
+            with torch.no_grad():
+                q_p = self.q_targets[agent](s_p[agent]).amax()
+                y = r[agent] + self.gamma * q_p * (1 - d[agent])
+
+            critic_loss = F.mse_loss(q, y)
             
             self.optim[agent].zero_grad()
             critic_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.critics[agent].parameters(), 0.5)
+            torch.nn.utils.clip_grad_norm_(self.q_funcs[agent].parameters(), 0.5)
             self.optim[agent].step()
+
+        pass
 
     def act(
         self,
@@ -101,10 +100,10 @@ class IQL():
         a_t = {}
         for agent in self.agents:
             q_values = self.q_funcs[agent](torch.from_numpy(s_t[agent]))
-            a_t = q_values.argmax()
+            a_pi = q_values.argmax()
             temp = np.zeros(5)
-            temp[a_t] = 1
-            a_t[agent] = temp
+            temp[a_pi] = 1
+            a_t[agent] = a_pi.item()
 
         return a_t
 
@@ -136,65 +135,39 @@ class IQL():
 
         return s_b, a_b, r_b, stp1_b, d_b
 
-def convert_actions(a_t, env):
-    new_a_t = {}
-    for agent in env.possible_agents:
-        new_a_t[agent] = np.insert(a_t[agent], 0, 0)
-        
-    return new_a_t
+    def train(
+        self,
+        train_steps,
+        report_freq=20
+    ) -> float:
+        logger = MultiagentRewardLogger(
+            agents=self.agents,
+            episode_avg=40,
+            report_freq=report_freq)
 
-def main():
-    with open("configs/spread_config.yml", "r") as ymlfile:
-        cfg = yaml.safe_load(ymlfile)
-
-    env = simple_v2.parallel_env(continuous_actions=True)
-
-    logger = RewardLogger(env.possible_agents, episode_avg=100, update_freq=50)
-
-    maddpg_agent = IQL(
-        environment=env,
-        actor_base=local_Actor,
-        lr=cfg['hparams']['lr'],
-        batch_size=100) #matd3 paper used batchsize of 100 and lr of 0.001
-
-    i = 0
-
-    for _ in range(cfg['train_episodes']):
-        s_t = env.reset()
-        while(env.agents):
-            i += 1
-            if i == maddpg_agent.learning_starts:
-                print('/n### Beginning training ###')
-
-            if i >= maddpg_agent.learning_starts:
-                a_t = maddpg_agent.act(s_t)
-                
+        # Training loop
+        s_t = self.env.reset()
+        for i in range(train_steps):
+            if i > self.learning_starts:
+                a_t = self.act(s_t)
             else:
-                a_t = {agent: env.action_space(agent).sample()[1:] for agent in env.possible_agents}
+                a_t = {agent: self.env.action_space(agent).sample() for agent in self.agents}
                 
-            s_tp1, r_t, done, trun, _ = env.step(convert_actions(a_t, env))
+            s_tp1, r_t, done, trun, _ = self.env.step(a_t)
             logger.log_step(r_t)
-
-            maddpg_agent.multiagent_store(s_t, a_t, r_t, s_tp1, done)
+            self.multiagent_store(s_t, a_t, r_t, s_tp1, done)
             s_t = s_tp1
 
-            if len(maddpg_agent) > maddpg_agent.batch_size and i % maddpg_agent.update_every == 0 and i > maddpg_agent.learning_starts:
-                maddpg_agent.update(i)
+            if len(self) >= self.batch_size and i >= self.learning_starts:
+                
+                if i % self.train_freq == 0:
+                    self.update()
 
-        logger.end_of_eps()
+                if i % self.target_update == 0:
+                    self.hard_target_update()
 
-    logger.plot_training()
+            if any(done.values()) or any(trun.values()):
+                logger.end_of_eps()
+                s_t = self.env.reset()
 
-    ### Render trained agents ###
-    while True:
-        s_t = env.reset()
-        while(env.agents):
-            a_t = maddpg_agent.act(s_t)
-            s_tp1, r_t, done, _, _ = env.step(convert_actions(a_t, env))
-            print(r_t)
-            env.render()
-            time.sleep(0.2)
-
-if __name__ == "__main__":
-    main()
-    
+        return logger.stats()
