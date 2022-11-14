@@ -8,23 +8,17 @@ import gym
 import copy
 import random
 from collections import deque
-from gym.wrappers import RecordEpisodeStatistics
 from typing import NamedTuple
 
 from code.utils.models import Q_dist
-
-class Transition(NamedTuple):
-    s: list
-    a: float
-    r: float
-    s_p: list
-    d: int
+from code.utils.memory import ReplayBuffer
 
 class C51:
     def __init__(
         self,
         env,
         network,
+        replay_buffer=ReplayBuffer,
         gamma=0.99,
         train_after=50000,
         train_freq=4,
@@ -33,10 +27,11 @@ class C51:
         learning_rate=1e-4,
         max_grad_norm=10,
         n_atoms=51,
-        v_max=10,
-        v_min=-10
+        v_max=200,  # for cartpole
+        v_min=0
     ):
         self.env = env
+        self.replay_buffer = replay_buffer(100000)
         self.q_func = network(env.observation_space.shape[0], env.action_space.n, n_atoms)
         self.q_target = copy.deepcopy(self.q_func)
         self.gamma = gamma
@@ -46,10 +41,13 @@ class C51:
         self.batch_size = batch_size
         self.optimizer = torch.optim.Adam(self.q_func.parameters(), lr=learning_rate)
         self.max_grad_norm = max_grad_norm
+
+        # distributional variables
         self.n_atoms = n_atoms
         self.v_max = v_max
         self.v_min = v_min
         self.dt_z = (self.v_max - self.v_min)/(self.n_atoms - 1)
+        self.z_interval = torch.tensor([np.round(v_min + self.dt_z*i, 1) for i in range(n_atoms)]).float()
 
         self.EPS_END = 0.05
         self.EPS = 0.9
@@ -57,12 +55,38 @@ class C51:
 
     def update(self, batch):
         s = torch.from_numpy(np.array(batch.s)).type(torch.float32)
-        a = torch.from_numpy(np.array(batch.a)).unsqueeze(1).type(torch.float32)
+        a = torch.from_numpy(np.array(batch.a)).unsqueeze(1).type(torch.int64)
         r = torch.FloatTensor(batch.r).unsqueeze(1)
         s_p = torch.from_numpy(np.array(batch.s_p)).type(torch.float32)
         d = torch.IntTensor(batch.d).unsqueeze(1)
-            
-        loss = 0 # to be replaced by KL divergence
+
+        z = self.q_func(s)
+        z_p = self.q_target(s_p)
+        a_p = torch.sum(torch.mul(z_p, self.z_interval), dim=-1).argmax(-1).unsqueeze(-1)
+        q_p = torch.matmul(z_p, self.z_interval).gather(1, a_p)
+        # ent_p = self.q_func.log_pi(s).squeeze()
+        
+        # print(ent_p, '/n')
+        # print(a, ent_p.gather(0, a))    # no idea why it doesnt gather the right one
+
+        ### Training steps:
+        # 1. scale target distribution with gamma
+        # 2. shift with r
+        # 3. project new target dist over main dist
+        # 4. get kl divergence / cross entropy
+
+        m = torch.zeros(self.batch_size, self.n_atoms)
+        if d == 0:
+            for j in range(self.n_atoms):
+                tz = (r + (self.gamma * self.z_interval[j])).clamp(self.v_min, self.v_max)
+                bj = (tz - self.v_min)/self.dt_z
+                l, u = bj.floor().long(), bj.ceil().long()
+                print(l, u)
+                m[l] += q_p[j]*(u - bj)
+                m[u] += q_p[j]*(bj - l)
+
+        print(m)
+        loss = 0
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -76,19 +100,21 @@ class C51:
 
     def select_action(self, s):
         self.EPS = max(self.EPS_END, self.EPS * self.EPS_DECAY)
+        self.EPS = 0
         if torch.rand(1) > self.EPS:
-            a_dist = torch.zeros(self.n_atoms)
-            # replaced with whatever way c51 chooses actions
+            a_dist = self.q_func(torch.from_numpy(s).float()).detach()
+            act_sum = torch.matmul(a_dist, self.z_interval)
+            #act_sum = torch.sum(az_dist, dim=-1)
+            a = torch.argmax(act_sum).numpy()
         else:
             a = self.env.action_space.sample()
 
-        return a, a_dist
+        return a
 
     def train(self, train_steps, r_avg_len=20, verbose=500):
         episodes = 0
         episodic_rewards = deque(maxlen=r_avg_len)
         r_sum = 0
-        replay_buffer = deque(maxlen=100000)
 
         # Training loop
         s_t = self.env.reset()
@@ -96,13 +122,13 @@ class C51:
             a_t = self.select_action(s_t)
             s_tp1, r_t, done, _ = self.env.step(a_t)
             r_sum += r_t
-            replay_buffer.append([s_t, a_t, r_t, s_tp1, done])
+            self.replay_buffer.append(s_t, a_t, r_t, s_tp1, done)
             s_t = s_tp1
 
-            if len(replay_buffer) >= self.batch_size and i >= self.train_after:
+            if len(self.replay_buffer) >= self.batch_size and i >= self.train_after:
                 
                 if i % self.train_freq == 0:
-                    batch = Transition(*zip(*random.sample(replay_buffer, k=self.batch_size)))
+                    batch = self.replay_buffer.sample(self.batch_size)
                     loss = self.update(batch)
 
                 if i % self.target_update == 0:
@@ -122,21 +148,9 @@ def main():
     env_name = 'CartPole-v0'
     env = gym.make(env_name)
 
-    c51_agent = C51(
-        env,
-        Q_dist, 
-        train_after=250,
-        target_update=300,
-        learning_rate=0.001)    #hyperparameters for lunarlander
+    c51_agent = C51(env, Q_dist, gamma=1, train_after=100, batch_size=1)
 
-    s_t = env.reset()
-    out = c51_agent.q_func(s_t)
-    print(out.shape)
-    #print(out[0])
-    
-    #c51_agent.train(train_steps=50000, r_avg_len=5, verbose=500)
-    
-    sys.exit()           
+    c51_agent.train(1000)
 
 if __name__ == "__main__":
     # stuff only to run when not called via 'import' here
