@@ -104,15 +104,40 @@ class Q_dist(nn.Module):
 		super(Q_dist, self).__init__()
 		self.action_dim = action_dim
 		self.n_atoms = n_atoms
-		self.l1 = nn.Linear(state_dim, 64)
-		self.l2 = nn.Linear(64, 64)
-		self.l3 = nn.Linear(64, self.action_dim * n_atoms)
+
+		self.net = nn.Sequential(
+			nn.Linear(state_dim, 64),
+			nn.ReLU(),
+			nn.Linear(64, 64),
+			nn.ReLU(),
+			nn.Linear(64, self.action_dim * n_atoms)
+		)
 
 	def forward(self, state):
-		q = F.relu(self.l1(state))
-		q = F.relu(self.l2(q))
-		q = self.l3(q).view(-1, self.action_dim, self.n_atoms)
-		return F.softmax(q, dim=-1)
+		q = self.net(state).view(-1, self.action_dim, self.n_atoms)
+		return F.softmax(q, dim=-1)	# , F.log_softmax(q, dim=-1)
+
+	def log_pi(self, state):
+		q = self.net(state).view(-1, self.action_dim, self.n_atoms)
+		return F.log_softmax(q, dim=-1)
+
+class Q_quantregression(nn.Module):
+	def __init__(self, state_dim, action_dim, N, hidden_dims=256):
+		super(Q_quantregression, self).__init__()
+		self.action_dim = action_dim
+		self.N = N
+
+		self.net = nn.Sequential(
+			nn.Linear(state_dim, hidden_dims),
+			nn.ReLU(),
+			nn.Linear(hidden_dims, hidden_dims),
+			nn.ReLU(),
+			nn.Linear(hidden_dims, self.action_dim * N)
+		)
+
+	def forward(self, state):
+		q = self.net(state).view(-1, self.action_dim, self.N)
+		return q
 
 class Q_duelling(nn.Module):
 	def __init__(self, state_dim, action_dim):

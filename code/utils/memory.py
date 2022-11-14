@@ -1,6 +1,8 @@
+import random
 import torch
 import numpy as np
 from typing import NamedTuple
+from collections import deque
 
 class Rollout_Memory(object):
 
@@ -58,3 +60,17 @@ class Transition(NamedTuple):
     r: float  # reward
     s_p: list  # next state
     d: int  # done
+
+class ReplayBuffer():
+    def __init__(self, buffer_len):
+        self.buffer = deque(maxlen=buffer_len)
+
+    def append(self, s, a, r, s_p, d):
+        self.buffer.append([s, a, r, s_p, d])
+
+    def sample(self, k):
+        return Transition(*zip(*random.sample(self.buffer, k)))
+
+    def __len__(self):
+        return len(self.buffer)
+        
