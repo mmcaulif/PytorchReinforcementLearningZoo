@@ -9,8 +9,8 @@ from torch.nn.utils import clip_grad_norm_
 from collections import deque
 import random
 
-from PytorchContinuousRL.code.utils.models import td3_Actor, twinq_Critic
-from PytorchContinuousRL.code.utils.memory import Transition
+from ..utils.models import td3_Actor, twinq_Critic
+from ..utils.memory import Transition
 
 class TD3():
     def __init__(self, 

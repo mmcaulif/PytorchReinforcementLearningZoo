@@ -61,20 +61,22 @@ class RewardLogger():
 
         # Plotting variables
         self.r_plot = []
+        self.steps = 0
         self.episodes = 0
 
     def log_step(self, rewards):
         self.r_trajectory += rewards
+        self.steps += 1       
+            
+        if self.report_freq is not None and self.steps % self.report_freq == 0:
+            print(f"TIMESTEPS {self.steps} DONE, TIMESTEPS {self.episodes} DONE, AVERAGE EPISODIC REWARDS: {self.stats()}")
         pass
         
     def end_of_eps(self):
         self.episodes += 1
         self.r_avg.append(self.r_trajectory)
         self.r_plot.append(round(sum(self.r_avg)/len(self.r_avg), 2))
-        self.r_trajectory = 0        
-            
-        if self.report_freq is not None and self.episodes % self.report_freq == 0:
-            print(f"EPISODE {self.episodes} DONE, AVERAGE EPISODIC REWARDS: {self.stats()}")
+        self.r_trajectory = 0
 
         pass
 

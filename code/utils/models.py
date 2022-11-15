@@ -120,7 +120,7 @@ class Q_dist(nn.Module):
 		return F.log_softmax(q, dim=-1)
 
 class Q_quantregression(nn.Module):
-	def __init__(self, state_dim, action_dim, N, hidden_dims=256):
+	def __init__(self, state_dim, action_dim, N=32, hidden_dims=256):
 		super(Q_quantregression, self).__init__()
 		self.action_dim = action_dim
 		self.N = N
@@ -136,6 +136,69 @@ class Q_quantregression(nn.Module):
 	def forward(self, state):
 		q = self.net(state).view(-1, self.action_dim, self.N)
 		return q
+
+class Critic_quantregression(nn.Module):
+	def __init__(self, state_dim, action_dim, N=32, hidden_dims=256):
+		super(Critic_quantregression, self).__init__()
+
+		self.net = nn.Sequential(
+			nn.Linear(state_dim + action_dim, hidden_dims),
+			nn.ReLU(),
+			nn.Linear(hidden_dims, hidden_dims),
+			nn.ReLU(),
+			nn.Linear(hidden_dims, N)
+		)
+
+		self.apply(weights_init_)
+
+	def forward(self, state, action):
+		try:
+			sa = torch.cat([state, action], 1)
+		except:	
+			sa = torch.cat([state, action], -1)
+
+		q = self.net(sa)
+		return q
+
+class TwinQ_quantregression(nn.Module):
+	def __init__(self, state_dim, action_dim, N=32, hidden_dims=256):
+		super(Critic_quantregression, self).__init__()
+
+		self.net1 = nn.Sequential(
+			nn.Linear(state_dim + action_dim, hidden_dims),
+			nn.ReLU(),
+			nn.Linear(hidden_dims, hidden_dims),
+			nn.ReLU(),
+			nn.Linear(hidden_dims, N)
+		)
+
+		self.net2 = nn.Sequential(
+			nn.Linear(state_dim + action_dim, hidden_dims),
+			nn.ReLU(),
+			nn.Linear(hidden_dims, hidden_dims),
+			nn.ReLU(),
+			nn.Linear(hidden_dims, N)
+		)
+
+		self.apply(weights_init_)
+
+	def forward(self, state, action):
+		try:
+			sa = torch.cat([state, action], 1)
+		except:	
+			sa = torch.cat([state, action], -1)
+
+		q1, q2 = self.net1(sa), self.net2(sa)
+		return q1, q2
+
+	def q1_forward(self, state, action):
+		try:
+			sa = torch.cat([state, action], 1)
+		except:	
+			sa = torch.cat([state, action], -1)
+
+		q1 = self.net1(sa)
+		return q1
 
 class Q_duelling(nn.Module):
 	def __init__(self, state_dim, action_dim):
@@ -159,11 +222,6 @@ class Q_duelling(nn.Module):
 		v = self.val(q)
 		a = self.adv(q)
 		return v + (a - a.mean())
-
-	def get_rel_adv(self, state):
-		q = F.relu(self.l1(state))
-		a = self.adv(q)
-		return (a - a.mean())
 
 class PPO_model(torch.nn.Module):
 	def __init__(self, input_size, action_size, net_size=256):

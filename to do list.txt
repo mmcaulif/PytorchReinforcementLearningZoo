@@ -1,5 +1,7 @@
-New to do list:
-
+New to do list:        
+    -benchmark qr-ddpg vs regular ddpg
+    -then implement qr-sac (use nature supplementary material as a reference)
+    -look into SAC actor implementation
     Organisation:
         -clean up library
         -implement .train() method and reward logger for all algorithms
@@ -7,19 +9,17 @@ New to do list:
         -standardise formatting in utils/model.py
         -standardise replaybuffer usage
         -standardise argument names
-
-    Technical:
-        -implement IQL and VDN
-        -implement qr-ddpg and benchmark it vs regular ddpg
+        -reformat rewardlogger to give updates based on timesteps not episodes
 
 Thesis:
     -Change training loop to work with trainsteps, not episodes
     -figure out IQL improvements like VDN
     ENGINEERING:
+        -implement IQL and VDN
         -experiment with converging on other coop environments
         -create trainer and config files    <- next up
         -create reward tracer with logging etc. X
-        -add policy smoothing noise to MATD3
+        -add policy smoothing noise to MATD3 ?
 
     RESEARCH:
         -look into papers re: transfer learning in MADRL

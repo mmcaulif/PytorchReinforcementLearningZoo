@@ -12,33 +12,36 @@ class QR_DQN:
         self,
         env,
         network,
+        buffer_size=100000,
         replay_buffer=ReplayBuffer,
+        lr=1e-4,
         gamma=0.99,
+        batch_size=64,
         learning_starts=50000,
         train_freq=4,
         target_update=1000,
-        batch_size=64,
-        learning_rate=1e-4,
         max_grad_norm=10,
         N=32,
         kappa=1
     ):
         self.env = env
-        self.replay_buffer = replay_buffer(100000)
-        self.q_func = network
-        self.q_target = copy.deepcopy(self.q_func)
+        self.buffer_size = buffer_size
+        self.replay_buffer = replay_buffer(self.buffer_size)
         self.gamma = gamma
         self.learning_starts = learning_starts
         self.train_freq = train_freq
         self.target_update = target_update
         self.batch_size = batch_size
-        self.optimizer = torch.optim.Adam(self.q_func.parameters(), lr=learning_rate)
+        self.optimizer = torch.optim.Adam(self.q_func.parameters(), lr=lr)
         self.max_grad_norm = max_grad_norm
 
         # distributional variables
         self.N = N
-        self.tau_interval = torch.FloatTensor([(n/self.N) for n in range(1, self.N+1)])   # Need to understand!
+        self.tau_interval = torch.FloatTensor([(n/self.N) for n in range(1, self.N+1)])
         self.kappa = kappa
+
+        self.q_func = network(env.observation_space.shape[0], env.action_space.n, self.N)
+        self.q_target = copy.deepcopy(self.q_func)
 
         self.EPS_END = 0.05
         self.EPS = 0.9
@@ -74,7 +77,7 @@ class QR_DQN:
         qh_loss = abs(self.tau_interval - (huber_loss.detach() < 0).float()) * huber_loss / self.kappa
         return qh_loss.sum(2).mean()
 
-    def hard_update(self):
+    def hard_target_update(self):
         self.q_target = copy.deepcopy(self.q_func)
 
     def select_action(self, s):
@@ -87,7 +90,7 @@ class QR_DQN:
 
         return a
 
-    def train(self, train_steps, report_freq=20):
+    def train(self, train_steps, report_freq):
         logger = RewardLogger(report_freq=report_freq)
 
         # Training loop
@@ -110,7 +113,7 @@ class QR_DQN:
                     loss = self.update(batch)
 
                 if i % self.target_update == 0:
-                    self.hard_update()
+                    self.hard_target_update()
 
             if done:
                 logger.end_of_eps()
@@ -122,7 +125,7 @@ def main():
     env_name = 'CartPole-v0'
     env = gym.make(env_name)
 
-    c51_agent = QR_DQN(
+    qrdqn_agent = QR_DQN(
         env,
         Q_quantregression,
         learning_starts=250,
@@ -130,7 +133,7 @@ def main():
         target_update=300,
         learning_rate=2.3e-3,)
 
-    c51_agent.train(train_steps=100000, r_avg_len=20, report_freq=2000)
+    qrdqn_agent.train(train_steps=100000, report_freq=2000)
 
 if __name__ == "__main__":
     # stuff only to run when not called via 'import' here

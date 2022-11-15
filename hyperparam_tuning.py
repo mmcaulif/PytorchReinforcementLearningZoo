@@ -10,7 +10,6 @@ def objective(trial):
     env = gym.make(env_name)
 
     n = trial.suggest_int("Dirac interval", 16, 32)
-    nn_size = trial.suggest_categorical("Hidden layer dimensions ", [32, 64, 128, 256, 300, 400])
     ls = trial.suggest_categorical("Learning_starts", [0, 250, 1000, 5000, 10000])
     tf = trial.suggest_int("Train frequency", 1, 16)
     bs = trial.suggest_categorical("Batch size", [16, 32, 64, 128])
@@ -19,7 +18,7 @@ def objective(trial):
 
     c51_agent = QR_DQN(
         env,
-        Q_quantregression(env.observation_space.shape[0], env.action_space.n, n, nn_size),
+        Q_quantregression,
         learning_starts=ls,
         train_freq=tf,
         batch_size=bs,
