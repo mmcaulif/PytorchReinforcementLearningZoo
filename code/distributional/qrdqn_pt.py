@@ -32,7 +32,6 @@ class QR_DQN:
         self.train_freq = train_freq
         self.target_update = target_update
         self.batch_size = batch_size
-        self.optimizer = torch.optim.Adam(self.q_func.parameters(), lr=lr)
         self.max_grad_norm = max_grad_norm
 
         # distributional variables
@@ -40,8 +39,9 @@ class QR_DQN:
         self.tau_interval = torch.FloatTensor([(n/self.N) for n in range(1, self.N+1)])
         self.kappa = kappa
 
-        self.q_func = network(env.observation_space.shape[0], env.action_space.n, self.N)
+        self.q_func = network
         self.q_target = copy.deepcopy(self.q_func)
+        self.optimizer = torch.optim.Adam(self.q_func.parameters(), lr=lr)
 
         self.EPS_END = 0.05
         self.EPS = 0.9
@@ -119,7 +119,7 @@ class QR_DQN:
                 logger.end_of_eps()
                 s_t = self.env.reset()
 
-        return logger.stats()
+        return logger.best
 
 def main():
     env_name = 'CartPole-v0'

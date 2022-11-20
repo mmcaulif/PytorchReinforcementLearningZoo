@@ -1,7 +1,9 @@
-New to do list:        
+New to do list:
+    -look into the sb3/cleanRl implementation of smoothing noise for ddpg
     -benchmark qr-ddpg vs regular ddpg
     -then implement qr-sac (use nature supplementary material as a reference)
     -look into SAC actor implementation
+    -implement devicing
     Organisation:
         -clean up library
         -implement .train() method and reward logger for all algorithms

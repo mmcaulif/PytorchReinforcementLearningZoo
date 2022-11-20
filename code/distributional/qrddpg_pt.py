@@ -117,7 +117,7 @@ class QR_DDPG():
                 logger.end_of_eps()
                 s_t = self.env.reset()
 
-        return logger.stats()
+        return logger.best
 
 def main():
     env_name = 'gym_cartpole_continuous:CartPoleContinuous-v0'

@@ -1,4 +1,5 @@
 import random
+import sys
 import torch
 import numpy as np
 from typing import NamedTuple
@@ -27,49 +28,24 @@ class ReplayBuffer():
 
 class Rollout_Memory(object):
     def __init__(self):
-        self.states, self.actions, self.rewards, self.policies, self.dones = [], [], [], [], []
-        self.qty = 0
+        self.states, self.actions, self.rewards, self.dones = [], [], [], []
     
-    def push(self, state, action, reward, policy, done):
+    def push(self, state, action, reward, done):
         self.states.append(state)
         self.actions.append(action)
         self.rewards.append(reward)
-        self.policies.append(policy)
         self.dones.append(done)
-        self.qty += 1
     
     def pop_all(self):
-        states = torch.as_tensor(np.array(self.states)).float()
-        actions = torch.as_tensor(np.array(self.actions)).float()
+        states = torch.from_numpy(np.array(self.states)).float()
+        actions = torch.from_numpy(np.array(self.actions)).float()
         rewards = torch.FloatTensor(self.rewards)
-        policies = torch.stack(self.policies).float()
         dones = torch.IntTensor(self.dones)
-        qty = self.qty
         
-        self.states, self.actions, self.rewards, self.policies, self.dones = [], [], [], [], []
-        self.qty = 0
+        self.states, self.actions, self.rewards, self.dones = [], [], [], []
         
-        return states, actions, rewards, policies, dones, qty
+        return states, actions, rewards, dones
 
-class Aux_Memory(object):
-    def __init__(self):
-        self.states, self.target_val, self.old_val = [], [], []
-        self.qty = 0
-    
-    def push(self, state, target_val, old_val):
-        self.states.append(state)
-        self.target_val.append(target_val)
-        self.old_val.append(old_val)
-        self.qty += 1
-    
-    def pop_all(self):
-        states = self.states[0]
-        target_val = self.target_val[0]
-        old_val = self.old_val[0]
-        qty = self.qty
-        
-        self.states, self.target_val, self.old_val = [], [], []
-        self.qty = 0
-        
-        return states, target_val, old_val, qty
+    def __len__(self):
+        return len(self.states)
         

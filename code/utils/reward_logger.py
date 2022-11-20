@@ -1,5 +1,6 @@
 from collections import deque
 import matplotlib.pyplot as plt
+import numpy as np
 
 class MultiagentRewardLogger():
     def __init__(self, agents, episode_avg=40, report_freq=20):
@@ -58,6 +59,7 @@ class RewardLogger():
         # Metrics
         self.r_trajectory = 0
         self.r_avg = deque(maxlen=self.running_length)
+        self.best = -np.Inf
 
         # Plotting variables
         self.r_plot = []
@@ -69,7 +71,7 @@ class RewardLogger():
         self.steps += 1       
             
         if self.report_freq is not None and self.steps % self.report_freq == 0:
-            print(f"TIMESTEPS {self.steps} DONE, TIMESTEPS {self.episodes} DONE, AVERAGE EPISODIC REWARDS: {self.stats()}")
+            print(f"TIMESTEPS {self.steps} DONE, EPISODES {self.episodes} DONE, AVERAGE EPISODIC REWARDS: {self.stats()}")
         pass
         
     def end_of_eps(self):
@@ -77,6 +79,9 @@ class RewardLogger():
         self.r_avg.append(self.r_trajectory)
         self.r_plot.append(round(sum(self.r_avg)/len(self.r_avg), 2))
         self.r_trajectory = 0
+        
+        if self.stats() > self.best:
+            self.best = self.stats()
 
         pass
 
