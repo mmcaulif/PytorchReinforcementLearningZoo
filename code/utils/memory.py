@@ -28,23 +28,25 @@ class ReplayBuffer():
 
 class Rollout_Memory(object):
     def __init__(self):
-        self.states, self.actions, self.rewards, self.dones = [], [], [], []
+        self.states, self.actions, self.rewards, self.dones, self.policies = [], [], [], [], []
     
-    def push(self, state, action, reward, done):
+    def push(self, state, action, reward, done, policy):
         self.states.append(state)
         self.actions.append(action)
         self.rewards.append(reward)
         self.dones.append(done)
+        self.policies.append(policy)
     
     def pop_all(self):
         states = torch.from_numpy(np.array(self.states)).float()
         actions = torch.from_numpy(np.array(self.actions)).float()
         rewards = torch.FloatTensor(self.rewards)
         dones = torch.IntTensor(self.dones)
+        policies = torch.FloatTensor(self.policies)
         
-        self.states, self.actions, self.rewards, self.dones = [], [], [], []
+        self.states, self.actions, self.rewards, self.dones, self.policies = [], [], [], [], []
         
-        return states, actions, rewards, dones
+        return states, actions, rewards, dones, policies
 
     def __len__(self):
         return len(self.states)
