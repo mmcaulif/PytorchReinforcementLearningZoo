@@ -18,9 +18,9 @@ class MultiagentRewardLogger():
         self.episodes = 0
         self.steps = 0
 
-    def log_step(self, rewards):
+    def log_step(self, rewards, agents):
         self.steps += 1
-        for agent in self.agents:
+        for agent in agents:
             self.r_trajectory[agent] += rewards[agent]              
             
         if self.report_freq is not None and self.steps % self.report_freq == 0:
